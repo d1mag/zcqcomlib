@@ -631,6 +631,53 @@ void ZZenoUSBDevice::handleInterruptData()
     }
 }
 
+#include <iostream>
+void ZZenoUSBDevice::hex_dump(const void *buffer, std::size_t bufsize, bool showPrintableChars)
+{
+    std::ostream& os = std::cout;
+    if (buffer == nullptr) {
+        return; // os;
+    }
+    auto oldFormat = os.flags();
+    auto oldFillChar = os.fill();
+    constexpr std::size_t maxline{8};
+    // create a place to store text version of string
+    char renderString[maxline+1];
+    char *rsptr{renderString};
+    // convenience cast
+    const unsigned char *buf{reinterpret_cast<const unsigned char *>(buffer)};
+
+    for (std::size_t linecount=maxline; bufsize; --bufsize, ++buf) {
+        //os << std::setw(2) << std::setfill('0') << std::hex 
+        os << std::hex 
+           << static_cast<unsigned>(*buf) << ' ';
+        *rsptr++ = std::isprint(*buf) ? *buf : '.';
+        if (--linecount == 0) {
+            *rsptr++ = '\0';  // terminate string
+            if (showPrintableChars) {
+                os << " | " << renderString;
+            } 
+            os << '\n';
+            rsptr = renderString;
+            linecount = std::min(maxline, bufsize);
+        }
+    }
+    // emit newline if we haven't already
+    if (rsptr != renderString) {
+        if (showPrintableChars) {
+            for (*rsptr++ = '\0'; rsptr != &renderString[maxline+1]; ++rsptr) {
+                 os << "   ";
+            }
+            os << " | " << renderString;
+        }
+        os << '\n';
+    }
+
+    os.fill(oldFillChar);
+    os.flags(oldFormat);
+    //return os;
+}
+
 void ZZenoUSBDevice::handleCommand(ZenoCmd* zeno_cmd)
 {
     // qDebug() << zeno_cmd->h.cmd_id;
@@ -655,9 +702,12 @@ void ZZenoUSBDevice::handleCommand(ZenoCmd* zeno_cmd)
         break;
     }
     case ZENO_CMD_CANFD_P1_RX: {
-        ZenoCANFDMessageP1* zeno_canfd_msg_p1 = reinterpret_cast<ZenoCANFDMessageP1*>(zeno_cmd);
+        // Ouch... ZenoCANFDMessageP1, ZENO_CMD_CANFD_P2_RX and ZENO_CMD_CANFD_P3_RX are missing timestamp high-bits? have only 32 bits available
+        ZenoCANFDMessageP1* zeno_canfd_msg_p1 = reinterpret_cast<ZenoCANFDMessageP1*>(zeno_cmd);  // Is this message only contain a 32-bit timestamp?!?
         // qDebug() << "RX CANFD P1 ch:" << zeno_canfd_msg_p1->channel << zeno_canfd_msg_p1->dlc << zeno_canfd_msg_p1->id << zeno_canfd_msg_p1->timestamp;
-
+        //printf("ZENO_CMD_CANFD_P1_RX: ts=%lu\n", (unsigned long)zeno_canfd_msg_p1->timestamp);
+        //hex_dump(zeno_canfd_msg_p1, sizeof(ZenoCANFDMessageP1));
+        
         if ( zeno_canfd_msg_p1->channel < can_channel_list.size()) {
             can_channel_list[zeno_canfd_msg_p1->channel]->queueMessageCANFDP1(*zeno_canfd_msg_p1);
         }
@@ -667,6 +717,7 @@ void ZZenoUSBDevice::handleCommand(ZenoCmd* zeno_cmd)
     case ZENO_CMD_CANFD_P2_RX: {
         ZenoCANFDMessageP2* zeno_canfd_msg_p2 = reinterpret_cast<ZenoCANFDMessageP2*>(zeno_cmd);
         // qDebug() << "RX CANFD P2 ch:" << zeno_canfd_msg_p2->channel;
+        //hex_dump(zeno_canfd_msg_p2, sizeof(ZenoCANFDMessageP2));
 
         if ( zeno_canfd_msg_p2->channel < can_channel_list.size()) {
             can_channel_list[zeno_canfd_msg_p2->channel]->queueMessageCANFDP2(*zeno_canfd_msg_p2);
@@ -677,6 +728,7 @@ void ZZenoUSBDevice::handleCommand(ZenoCmd* zeno_cmd)
     case ZENO_CMD_CANFD_P3_RX: {
         ZenoCANFDMessageP3* zeno_canfd_msg_p3 = reinterpret_cast<ZenoCANFDMessageP3*>(zeno_cmd);
         // qDebug() << "RX CANFD P3 ch:" << zeno_canfd_msg_p3->channel;
+        //hex_dump(zeno_canfd_msg_p3, sizeof(ZenoCANFDMessageP3));
 
         if ( zeno_canfd_msg_p3->channel < can_channel_list.size()) {
             can_channel_list[zeno_canfd_msg_p3->channel]->queueMessageCANFDP3(*zeno_canfd_msg_p3);

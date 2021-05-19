@@ -390,7 +390,9 @@ typedef struct {
     uint8_t flags;
 
     uint32_t id;
-    uint32_t timestamp;
+    uint32_t timestamp; // Should be 64 bits.
+    //uint32_t timestamp_msb; // timestamp_msb is really missing... Probably need to rearrange the USB-messages
+    // total data: 18+28+18 == 64
 
     uint8_t data[18];
 
@@ -416,7 +418,7 @@ typedef struct {
     uint8_t data[18];
 
     /* Fill up up to 32 bytes */
-    uint8_t unused[10];
+    uint8_t unused[10]; // perhaps add timestamp_msg here?
 } ZenoCANFDMessageP3;
 
 typedef struct {

@@ -103,6 +103,7 @@ public:
     bool isInitClockCalibrationDone() const {
         return init_calibrate_count == 0;
     }
+    void hex_dump(const void *buffer, std::size_t bufsize, bool showPrintableChars = true);
 
 protected:
     void freeTransfers();

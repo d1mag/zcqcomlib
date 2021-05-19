@@ -37,6 +37,8 @@
 #include <string.h>
 #include <algorithm>
 
+#include <canstat.h>
+
 #ifdef _WIN32
   /* some bloody #define of min conflicts with C++ std::min and std::max */
   #ifdef min
@@ -676,13 +678,19 @@ ZCANFlags::ReadResult ZZenoCANChannel::readWait(uint32_t& id, uint8_t *msg,
         flags |= TxMsgAcknowledge;
 
     if ( is_canfd_mode ) {
-        if (rx.flags & ZenoCANFlagFD)
-            flags |= CanFDFrame;
-
-        if (rx.flags & ZenoCANFlagFDBRS)
-            flags |= CanFDBitrateSwitch;
+        if (rx.flags & ZenoCANFlagFD) {
+            //flags |= CanFDFrame; // This is not available for C-application zcanflags.h:CanFDFrame=0x80000
+            //flags |= ZenoCANFlagFD; // Missmatch for c-application ZenoCANFlagFD=0x8
+            flags |= canFDMSG_FDF; // canstat.h == 0x010000   colliding with InternalFrame==0x10000
+        }
+        if (rx.flags & ZenoCANFlagFDBRS) {
+            //flags |= CanFDBitrateSwitch; // This is not available for C-application zcanflags.h:CanFDBitrateSwitch=0x100000
+            //flags |= ZenoCANFlagFDBRS; // Missmatch for c-application ZenoCANFlagFDBRS=0x10
+            flags |= canFDMSG_BRS; // canstat.h == 0x020000 colliging with ISO15765ExtAddr==0x20000
+        }
         //TODO: Check flag CanFDESI
     }
+    //zDebug("flags=%lX\n", flags);
 
     dlc = std::min(unsigned(rx.dlc),unsigned(is_canfd_mode ? 64 : 8));
     msg_bit_count += dlc * 8;
@@ -975,7 +983,7 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
         rx_message_fifo_cond.notify_one();
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
-        rx_message->timestamp = message_p1.timestamp;
+        rx_message->timestamp = message_p1.timestamp; // This is increased to 64 bits
         rx_message->id        = message_p1.id;
         rx_message->flags     = message_p1.flags;
         rx_message->dlc       = message_p1.dlc;

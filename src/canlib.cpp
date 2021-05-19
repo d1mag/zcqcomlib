@@ -218,7 +218,27 @@ canStatus CANLIBAPI canSetBusParamsFd(const CanHandle handle,
     auto can_channel = getChannel(handle);
     if ( can_channel == nullptr ) return canERR_INVHANDLE;
 
-    bool r = can_channel->setBusParametersFd(freq_brs,70,int(sjw_brs));
+    int bitrate;
+    switch(freq_brs) {
+    case canFD_BITRATE_500K_80P:
+        bitrate = 500000;
+        break;
+    case canFD_BITRATE_1M_80P:
+        bitrate = 1000000;
+        break;
+    case canFD_BITRATE_2M_80P:
+        bitrate = 2000000;
+        break;
+    case canFD_BITRATE_4M_80P:
+        bitrate = 4000000;
+        break;
+    case canFD_BITRATE_8M_60P:
+        bitrate = 8000000;
+        break;
+    default:
+        return canERR_PARAM;
+    }
+    bool r = can_channel->setBusParametersFd(bitrate,70,int(sjw_brs));
     if (!r) return canERR_INTERNAL;
 
     return canOK;

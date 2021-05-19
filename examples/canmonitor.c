@@ -178,7 +178,8 @@ int main(int argc, char *argv[])
     if (stat == canOK) {
       msgCounter++;
       if (flag & canMSG_ERROR_FRAME) {
-        printf("(%u) ERROR FRAME", msgCounter);
+        printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
+        continue;
       }
       else {
         unsigned j;
@@ -191,7 +192,7 @@ int main(int argc, char *argv[])
           printf("%2.2x ", msg[j]);
         }
       }
-      printf(" flags:0x%x time:%lu\n", flag, time);
+      printf(" flags:0x%x time:%llu\n", flag, (unsigned long long)time);
     }
     else {
       if (errno == 0) {

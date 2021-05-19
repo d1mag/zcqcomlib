@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
     return -1;
   }
 
-  stat = canSetBusParams(hnd, canFD_BITRATE_1M_80P, 0, 0, 0, 0, 0);
+  stat = canSetBusParams(hnd, canBITRATE_500K, 0, 0, 0, 0, 0);
   check("canSetBusParams", stat);
   if (stat != canOK) {
     goto ErrorExit;
@@ -165,10 +165,33 @@ int main(int argc, char *argv[])
 
       msgCounter++;
       if (flag & canMSG_ERROR_FRAME) {
-        printf("(%u) ERROR FRAME flags:0x%x time:%lu\n", msgCounter, flag, time);
+          /*
+            Error frames have completely different timestamps.
+            Error frames and can frames have 64 bits. CAN-FD frames have 32 bits.
+                        
+            (9358) ERROR FRAME flags:0x10020 time:950667868
+            (9359) ERROR FRAME flags:0x10020 time:950743906
+            CH: 0 FD+: : 8:00000101 flags:0x30002 time:74939612
+            20  00  00  00  00  00  00  00
+            CH: 0 FD+: : 8:00000506 flags:0x30002 time:74939743
+            00  00  00  00  00  00  00  00
+            CH: 0 FD+: : 8:00000101 flags:0x30002 time:76638295
+            40  00  00  00  00  00  00  00
+            CH: 0 FD+: : 8:00000506 flags:0x30002 time:76638410
+            00  00  00  00  00  00  00  00
+            CH: 0 FD+: :64:00000021 flags:0x30002 time:76638797
+            00  00  00  00  00  00  00  00  00  00  00  00  00  00  00  00
+            00  00  00  00  00  00  00  00  00  00  00  00  00  00  00  00
+            00  00  00  00  00  00  00  00  00  00  00  00  00  00  00  00
+            00  00  00  00  00  00  00  00  00  00  00  00  00  00  00  00
+          */
+          
+          printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
         continue;
       }
 
+      // Flags set is: CanFDFrame CanFDBitrateSwitch TxMsgAcknowledge Extended Standard ErrorFrame
+      // but they are not available here yet!!! canfd flags are not matching the defines called canFDMSG*
       if (flag & canFDMSG_FDF) {
         if (flag & canFDMSG_BRS) {
           can_std = "FD+";
@@ -185,12 +208,12 @@ int main(int argc, char *argv[])
              can_std,
              (flag & canMSG_EXT) ? "X" : " ",
              dlc,id);
-
+#if 0
       if (flag & canFDMSG_ESI) {
-        printf("ESI ");
+          printf("ESI "); // Sender of the message is in error passive mode
       }
-
-      printf(" flags:0x%x time:%lu", flag, time);
+#endif
+      printf(" flags:0x%x time:%llu", flag, (unsigned long long)time);
 
       for (i = 0; i < dlc; i++) {
         unsigned char byte = msg[i];
