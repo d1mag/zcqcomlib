@@ -594,26 +594,47 @@ bool ZZenoCANChannel::readFromRXFifo(ZZenoCANChannel::FifoRxCANMessage& rx,
                                      int timeout_in_ms)
 {
     std::unique_lock<std::mutex> lock(rx_message_fifo_mutex);
-
     if ( rx_message_fifo.isEmpty()) {
         if ( timeout_in_ms != -1) {
             std::chrono::milliseconds timeout(timeout_in_ms);
-
             /* Wait for RX FIFO */
-            rx_message_fifo_cond.wait_for(lock,timeout);
+            std::cv_status rc;
+            rc = rx_message_fifo_cond.wait_for(lock,timeout);
+            if(rc == std::cv_status::no_timeout) {
+#if 0
+                // Should not be needed
+                /* If RX FIFO is still empty */
+                if ( rx_message_fifo.isEmpty() ) {
+                    rx_message_fifo_mutex.unlock();
+                    printf("Got signal, but nothing in fifo?\n");
+                    return false;
+                }
+#endif
+            } else {
+                if ( rx_message_fifo.isEmpty() ) {
+                    rx_message_fifo_mutex.unlock();
+                    return false;
+                } else {
+                    printf("Got something, even if timeout?\n");
+                }
+            }
         } else {
             /* Infinite wait */
             rx_message_fifo_cond.wait(lock);
+#if 0
+            // Should not be needed
+            /* If RX FIFO is still empty */
+            if ( rx_message_fifo.isEmpty() ) {
+                rx_message_fifo_mutex.unlock();
+                return false;
+            }
+#endif
         }
 
-        /* If RX FIFO is still empty */
-        if ( rx_message_fifo.isEmpty() ) {
-            rx_message_fifo_mutex.unlock();
-            return false;
-        }
     }
 
     rx = rx_message_fifo.read();
+    rx_message_fifo_mutex.unlock(); // we are done reading
     return true;
 }
 
@@ -655,7 +676,7 @@ ZCANFlags::ReadResult ZZenoCANChannel::readWait(uint32_t& id, uint8_t *msg,
 {
     FifoRxCANMessage rx;
     if (!readFromRXFifo(rx, timeout_in_ms)) return ReadTimeout;
-
+    
     flags = 0;
     id = long(rx.id);
     int msg_bit_count = 0;
@@ -954,10 +975,9 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 
     if ( rx_message_fifo.available() == 0 ) {
         zDebug("ZenoCAN Ch%d Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
+        rx_message_fifo_mutex.unlock();
         return;
     }
-
-    rx_message_fifo_cond.notify_one();
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = message.timestamp | (uint64_t(message.timestamp_msb) << 32);
@@ -968,19 +988,18 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 
     rx_message_fifo.write();
     dispatchRXEvent(rx_message);
+    rx_message_fifo_cond.notify_one();
+    rx_message_fifo_mutex.unlock();
 }
 
 void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 {
     if ( message_p1.dlc <= 18 ) {
-        std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
-
         if ( rx_message_fifo.available() == 0 ) {
             zDebug("ZenoCAN Ch%d P1 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
+            rx_message_fifo_mutex.unlock();
             return;
         }
-
-        rx_message_fifo_cond.notify_one();
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
         rx_message->timestamp = message_p1.timestamp; // This is increased to 64 bits
@@ -991,6 +1010,8 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 
         rx_message_fifo.write();
         dispatchRXEvent(rx_message);
+        rx_message_fifo_cond.notify_one();
+        rx_message_fifo_mutex.unlock(); // We are definately done with 1-18 bytes
     }
     else {
         canfd_msg_p1 = message_p1;
@@ -1000,14 +1021,11 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
 {
     if ( canfd_msg_p1.dlc <= 46 ) {
-        std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
-
         if ( rx_message_fifo.available() == 0 ) {
             zDebug("ZenoCAN Ch%d P2 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
+            rx_message_fifo_mutex.unlock();
             return;
         }
-
-        rx_message_fifo_cond.notify_one();
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
         rx_message->timestamp = canfd_msg_p1.timestamp;
@@ -1019,6 +1037,8 @@ void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
         memcpy(rx_message->data + 18, message_p2.data,   canfd_msg_p1.dlc - 18);
         rx_message_fifo.write();
         dispatchRXEvent(rx_message);
+        rx_message_fifo_cond.notify_one();
+        rx_message_fifo_mutex.unlock(); // We are definately done with 18-45 bytes
     }
     else {
         canfd_msg_p2 = message_p2;
@@ -1033,17 +1053,15 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
     if ( canfd_msg_p1.dlc < 46 ) {
         memset(&canfd_msg_p1, 0 , sizeof(canfd_msg_p1));
         memset(&canfd_msg_p2, 0 , sizeof(canfd_msg_p2));
+        rx_message_fifo_mutex.unlock();
         return;
     }
-
-    std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
 
     if ( rx_message_fifo.available() == 0 ) {
         zDebug("ZenoCAN Ch%d P3 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
+        rx_message_fifo_mutex.unlock();
         return;
     }
-
-    rx_message_fifo_cond.notify_one();
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = canfd_msg_p1.timestamp;
@@ -1058,8 +1076,11 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
     rx_message_fifo.write();
     dispatchRXEvent(rx_message);
 
+    rx_message_fifo_cond.notify_one();
+
     memset(&canfd_msg_p1, 0 , sizeof(canfd_msg_p1));
     memset(&canfd_msg_p2, 0 , sizeof(canfd_msg_p2));
+    rx_message_fifo_mutex.unlock(); // We are definately done with 46-64 bytes
 }
 
 void ZZenoCANChannel::txAck(ZenoTxCANRequestAck& tx_ack)

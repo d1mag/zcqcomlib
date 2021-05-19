@@ -436,13 +436,13 @@ canStatus CANLIBAPI canReadWait (const CanHandle handle,
     r = can_channel->readWait(reinterpret_cast<uint32_t&>(*id),
                               reinterpret_cast<uint8_t*>(msg),
                               __dlc, *flags, __time, int(timeout));
-    *dlc = __dlc;
-    *time = static_cast<unsigned long>(__time);
-
     if ( r != ZCANChannel::ReadStatusOK ) {
         if ( r == ZCANChannel::ReadTimeout ) return canERR_TIMEOUT;
         else return canERR_INTERNAL;
     }
+
+    *dlc = __dlc;
+    *time = static_cast<unsigned long>(__time);
 
     return canOK;
 }

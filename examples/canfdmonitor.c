@@ -51,11 +51,16 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <getopt.h>
 
 #define ALARM_INTERVAL_IN_S   (1)
 #define READ_WAIT_INFINITE    (unsigned long)(-1)
 
 static unsigned int msgCounter = 0;
+extern int optind, opterr, optopt;
 
 static void check(char* id, canStatus stat)
 {
@@ -97,19 +102,64 @@ int main(int argc, char *argv[])
   canHandle hnd;
   canStatus stat;
   int channel;
+  int verbose = 1;
+  int silent = 0;
+  int opt;
+  long timeout = READ_WAIT_INFINITE;
+  long loops = 0;
+  int got_channel = 0;
+  
+   struct option long_options[] = {
+      { "help",   no_argument,      0, 'h' },
+      { "loop",   required_argument,   0, 'l' },
+      { 0,      0,         0, 0},
+   };
 
-  if (argc != 2) {
-    printUsageAndExit(argv[0]);
-  }
+   if (argc < 2) {
+       printUsageAndExit(argv[0]);
+   }
+   while ((opt = getopt_long(argc, argv, "hVvl:t:s", long_options, NULL)) != -1) {
+       switch (opt) {
+       case 'h':
+           printUsageAndExit(argv[0]);
+           break;
 
-  {
-    char *endPtr = NULL;
-    errno = 0;
-    channel = strtol(argv[1], &endPtr, 10);
-    if ( (errno != 0) || ((channel == 0) && (endPtr == argv[1])) ) {
-      printUsageAndExit(argv[0]);
-    }
-  }
+       case 'v':
+           verbose++;
+           break;
+            
+       case 's':
+           silent = 1;
+           break;
+            
+       case 't':
+           if (optarg) {
+               timeout = strtoul(optarg, NULL, 0);
+           }
+           break;
+            
+       case 'l':
+           if (optarg) {
+               loops = strtoul(optarg, NULL, 0);
+           }
+           break;
+            
+       case 'V':
+           printf("Version 0.1\n");
+           break;
+       default:
+           printUsageAndExit(argv[0]);
+           break;
+       }
+   }
+   if (argv[optind]) {
+       channel = strtol(argv[optind], NULL, 10);
+       got_channel = 1;
+   }
+
+   if (!got_channel) {
+       printUsageAndExit(argv[0]);
+   }
 
   printf("Reading messages on channel %d\n", channel);
 
@@ -150,6 +200,9 @@ int main(int argc, char *argv[])
 
   // alarm(ALARM_INTERVAL_IN_S);
 
+  int nr = 0;
+  int nr_received = 0;
+  int nr_bytes = 0;
   do {
     long id;
     unsigned char msg[64];
@@ -157,9 +210,16 @@ int main(int argc, char *argv[])
     unsigned int flag;
     unsigned long time;
 
-    stat = canReadWait(hnd, &id, &msg, &dlc, &flag, &time, READ_WAIT_INFINITE);
-
-    if (stat == canOK) {
+    stat = canReadWait(hnd, &id, &msg, &dlc, &flag, &time, timeout);
+    if(stat == canERR_TIMEOUT) {
+        nr++;
+        printf("Idle waiting %d / 10\n", nr);
+        if(nr >= 10) {
+            printf("Exit since idle 10 seconds\n");
+            break;
+        }
+        stat = canOK;
+    } else if (stat == canOK) {
       char *can_std;
       unsigned int i;
 
@@ -190,40 +250,45 @@ int main(int argc, char *argv[])
         continue;
       }
 
-      // Flags set is: CanFDFrame CanFDBitrateSwitch TxMsgAcknowledge Extended Standard ErrorFrame
-      // but they are not available here yet!!! canfd flags are not matching the defines called canFDMSG*
-      if (flag & canFDMSG_FDF) {
-        if (flag & canFDMSG_BRS) {
-          can_std = "FD+";
+      nr_received++;
+      nr_bytes += dlc;
+      if(!silent) {
+          // Flags set is: CanFDFrame CanFDBitrateSwitch TxMsgAcknowledge Extended Standard ErrorFrame
+          // but they are not available here yet!!! canfd flags are not matching the defines called canFDMSG*
+          if (flag & canFDMSG_FDF) {
+              if (flag & canFDMSG_BRS) {
+                  can_std = "FD+";
+              }
+              else {
+                  can_std = "FD ";
+              }
           }
-        else {
-          can_std = "FD ";
-        }
-      }
-      else {
-        can_std = "STD";
-      }
+          else {
+              can_std = "STD";
+          }
 
-      printf("CH:%2d %s:%s:%2u:%08lx", channel,
-             can_std,
-             (flag & canMSG_EXT) ? "X" : " ",
-             dlc,id);
+          printf("CH:%2d %s:%s:%2u:%08lx", channel,
+                 can_std,
+                 (flag & canMSG_EXT) ? "X" : " ",
+                 dlc,id);
 #if 0
-      if (flag & canFDMSG_ESI) {
-          printf("ESI "); // Sender of the message is in error passive mode
-      }
+          if (flag & canFDMSG_ESI) {
+              printf("ESI "); // Sender of the message is in error passive mode
+          }
 #endif
-      printf(" flags:0x%x time:%llu", flag, (unsigned long long)time);
+          printf(" flags:0x%x time:%llu", flag, (unsigned long long)time);
 
-      for (i = 0; i < dlc; i++) {
-        unsigned char byte = msg[i];
-
-        if ((i % 16) == 0) {
-          printf("\n    ");
-        }
-        printf(" %02x ", byte);
+          for (i = 0; i < dlc; i++) {
+              unsigned char byte = msg[i];
+#if 0
+              if ((i % 16) == 0) {
+                  printf("\n    ");
+              }
+#endif
+              printf(" %02x ", byte);
+          }
+          printf("\n");
       }
-      printf("\n");
     }
     else {
       if (errno == 0) {
@@ -232,16 +297,18 @@ int main(int argc, char *argv[])
       else {
         perror("\ncanReadWait error");
       }
+        printf("got not canok2\n");
     }
-
+    if(loops && (nr_received > loops)) break;
   } while (stat == canOK);
 
 #if 0
   sighand(SIGALRM);
 #endif
 
+  printf("received %lu frames (%lu bytes)\n", (unsigned long)nr_received, (unsigned long)nr_bytes);
+  
 ErrorExit:
-
   // alarm(0);
   stat = canBusOff(hnd);
   check("canBusOff", stat);

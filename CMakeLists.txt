@@ -7,6 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 if (UNIX)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+    
+    if(CMAKE_BUILD_TYPE MATCHES Debug)
+      set(CMAKE_CXX_FLAGS -pg)
+      set(CMAKE_EXE_LINKER_FLAGS -pg)
+      set(CMAKE_SHARED_LINKER_FLAGS -pg)
+    endif (CMAKE_BUILD_TYPE)
 endif (UNIX)
 
 if (WIN32)
