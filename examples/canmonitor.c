@@ -54,10 +54,23 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <getopt.h>
+#include <pthread.h>
+#include <string.h> // for memset
 
 #define READ_WAIT_INFINITE    (unsigned long)(-1)
 
-static unsigned int msgCounter = 0;
+extern int optind, opterr, optopt;
+static int verbose = 1;
+static int silent = 0;
+long timeout = READ_WAIT_INFINITE;
+long max_idle_time = 0;
+long loops = 0;
+#define MAX_CHANNELS 6
+int channel[MAX_CHANNELS];
+int check_cansequence = 0;
 
 static void check(char* id, canStatus stat)
 {
@@ -71,7 +84,15 @@ static void check(char* id, canStatus stat)
 
 static void printUsageAndExit(char *prgName)
 {
-  printf("Usage: '%s <channel>'\n", prgName);
+  printf("Usage: '%s <channel> [<channel2>...] [-b 500000] [-s] [-v] [-t 10] [-l 100]'\n", prgName);
+  printf("\t-b\tBitrate\n");
+  printf("\t-B\tHigher data-bitrate on CAN-FD\n");
+  printf("\t-t\tExit after x seconds idle time\n");
+  printf("\t-l\tRead x frames before exit\n");
+  printf("\t-r\tRead and compare frames with cansequence output\n");
+  printf("\t-s\tSilent mode without much output\n");
+  printf("\t-v\tVerbose output\n");
+  printf("\t-V\tVersion\n");
   exit(1);
 }
 
@@ -98,6 +119,7 @@ static char* busStatToStr(const unsigned long flag) {
 }
 
 void notifyCallback(canNotifyData *data) {
+    if(silent) return;
   switch (data->eventType) {
   case canEVENT_STATUS:
     printf("CAN Status Event: %s\n", busStatToStr(data->info.status.busStatus));
@@ -115,26 +137,198 @@ void notifyCallback(canNotifyData *data) {
   return;
 }
 
+int to_bitrate(int x)
+{
+    switch(x) {
+    case 250000:
+        return canBITRATE_250K;
+    case 500000:
+        return canBITRATE_500K;
+    case 1000000:
+        return canBITRATE_1M;
+    }
+    return canBITRATE_500K;
+}
+
+void *read_thread(void *v)
+{
+    canHandle *hnd = (canHandle *)v;
+    canStatus stat;
+    int idle_time = 0;
+    int nr_bytes = 0;
+    unsigned int msgCounter = 0;
+    unsigned int next_expected_id = 0;
+
+    printf("thread started\n");
+
+    do {
+        long id;
+        unsigned char msg[8];
+        unsigned int dlc;
+        unsigned int flag;
+        unsigned long time;
+        unsigned long last_time;
+
+        stat = canReadWait(*hnd, &id, &msg, &dlc, &flag, &time, timeout);
+        if(stat == canERR_TIMEOUT) {
+            idle_time++;
+            printf("can%d Idle waiting %d / %ld\n", *hnd, idle_time, max_idle_time);
+            if(idle_time >= max_idle_time) {
+                printf("can%d Exit since idle %ld seconds\n", *hnd, max_idle_time);
+                break;
+            }
+            stat = canOK;
+        } else if (stat == canOK) {
+            msgCounter++;
+            if (flag & canMSG_ERROR_FRAME) {
+                printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
+                continue;
+            }
+
+            idle_time = 0;
+            nr_bytes += dlc;
+
+            if(check_cansequence) {
+                if(msg[0] != next_expected_id) {
+                    // Verify frame-id with generated cansequence frames
+                    unsigned int missing;
+                    if(msg[0] && (msg[0] == next_expected_id)) {
+                        printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", *hnd, msg[0], time, last_time);
+                    } else {
+                        if(msg[0] < next_expected_id) {
+                            missing = next_expected_id - msg[0];
+                        } else {
+                            missing = msg[0] - next_expected_id;
+                        }
+                        printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld)\n", *hnd, next_expected_id, msg[0], missing, time-last_time, time, last_time);
+                    }
+                }
+                if(next_expected_id == 0xFF) {
+                    next_expected_id = 0;
+                } else {
+                    next_expected_id = msg[0] + 1;
+                }
+                last_time = time;
+            }
+
+            if(!silent) {
+
+                if (flag & canMSG_ERROR_FRAME) {
+                    printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
+                }
+                else {
+                    unsigned j;
+
+                    printf("id:%lx dlc:%u data: ", id, dlc);
+                    if (dlc > 8) {
+                        dlc = 8;
+                    }
+                    for (j = 0; j < dlc; j++) {
+                        printf("%2.2x ", msg[j]);
+                    }
+                    printf(" flags:0x%x time:%llu\n", flag, (unsigned long long)time);
+                }
+            }
+        }
+        else {
+            if (errno == 0) {
+                check("\ncanReadWait", stat);
+            }
+            else {
+                perror("\ncanReadWait error");
+            }
+        }
+
+        if(loops && (msgCounter > loops)) break;
+    } while (stat == canOK);
+
+    printf("can%d received %lu frames (%lu bytes)\n", *hnd, (unsigned long)msgCounter, (unsigned long)nr_bytes);
+}
+
+
 int main(int argc, char *argv[])
 {
-  canHandle hnd;
+  canHandle hnd[MAX_CHANNELS];
   canStatus stat;
-  int channel;
+  int opt;
+  int i;
+  long loops = 0;
+  int nr_channels = 0;
+  int bitrate = canBITRATE_500K;
+  
+   struct option long_options[] = {
+      { "help",   no_argument,      0, 'h' },
+      { "loop",   required_argument,   0, 'l' },
+      { 0,      0,         0, 0},
+   };
 
-  if (argc != 2) {
-    printUsageAndExit(argv[0]);
-  }
+   if (argc < 2) {
+       printUsageAndExit(argv[0]);
+   }
+   while ((opt = getopt_long(argc, argv, "hVvl:t:b:sr", long_options, NULL)) != -1) {
+       switch (opt) {
+       case 'h':
+           printUsageAndExit(argv[0]);
+           break;
 
-  {
-    char *endPtr = NULL;
-    errno = 0;
-    channel = strtol(argv[1], &endPtr, 10);
-    if ( (errno != 0) || ((channel == 0) && (endPtr == argv[1])) ) {
-      printUsageAndExit(argv[0]);
-    }
-  }
+       case 'r':
+           check_cansequence = 1;
+           break;
 
-  printf("Reading messages on channel %d\n", channel);
+       case 'v':
+           verbose++;
+           break;
+            
+       case 's':
+           silent = 1;
+           break;
+            
+       case 't':
+           if (optarg) {
+               max_idle_time = strtoul(optarg, NULL, 0);
+               if(max_idle_time <= 0) {
+                   max_idle_time = 0;
+               } else {
+                   timeout = 1000;
+               }
+           }
+           break;
+            
+       case 'b':
+           if (optarg) {
+               bitrate = to_bitrate(strtoul(optarg, NULL, 0));
+           }
+           break;
+            
+       case 'l':
+           if (optarg) {
+               loops = strtoul(optarg, NULL, 0);
+           }
+           break;
+            
+       case 'V':
+           printf("Version 0.1\n");
+           break;
+       default:
+           printUsageAndExit(argv[0]);
+           break;
+       }
+   }
+   while(optind < argc) {
+       if (argv[optind]) {
+           channel[nr_channels] = strtol(argv[optind], NULL, 10);
+           if(channel[nr_channels] < MAX_CHANNELS) {
+               printf("use channel %d\n", channel[nr_channels]);
+               nr_channels++;
+           }
+       }
+       optind++;
+   }
+   if (!nr_channels) {
+       printUsageAndExit(argv[0]);
+   }
+
+   printf("Reading messages on %d channels\n", nr_channels);
 
 #if 0
   /* Allow signals to interrupt syscalls */
@@ -144,74 +338,69 @@ int main(int argc, char *argv[])
 
   canInitializeLibrary();
 
-  /* Open channel, set parameters and go on bus */
-  hnd = canOpenChannel(channel, canOPEN_EXCLUSIVE | canOPEN_REQUIRE_EXTENDED | canOPEN_ACCEPT_VIRTUAL);
-  if (hnd < 0) {
-    printf("canOpenChannel %d", channel);
-    check("", hnd);
-    return -1;
+  for(i=0; i<nr_channels; i++) {
+      /* Open channel, set parameters and go on bus */
+      hnd[i] = canOpenChannel(channel[i], canOPEN_EXCLUSIVE | canOPEN_REQUIRE_EXTENDED | canOPEN_ACCEPT_VIRTUAL);
+      if (hnd[i] < 0) {
+          printf("canOpenChannel %d", channel[i]);
+          check("", hnd[i]);
+          return -1;
+      }
+
+      if(!silent) {
+          printf("setNotify on all event\n");
+          // skip notify if running silient... just want to test read-performacne.
+          stat = canSetNotify(hnd[i], notifyCallback, canNOTIFY_RX | canNOTIFY_TX | canNOTIFY_ERROR | canNOTIFY_STATUS | canNOTIFY_ENVVAR, (char*)0);
+          check("canSetNotify", stat);
+      }
+  
+      stat = canSetBusParams(hnd[i], bitrate, 0, 0, 0, 0, 0);
+      check("canSetBusParams", stat);
+      if (stat != canOK) {
+          goto ErrorExit;
+      }
+      stat = canBusOn(hnd[i]);
+      check("canBusOn", stat);
+      if (stat != canOK) {
+          goto ErrorExit;
+      }
   }
 
-  stat = canSetNotify(hnd, notifyCallback, canNOTIFY_RX | canNOTIFY_TX | canNOTIFY_ERROR | canNOTIFY_STATUS | canNOTIFY_ENVVAR, (char*)0);
-  check("canSetNotify", stat);
 
-  stat = canSetBusParams(hnd, canBITRATE_1M, 0, 0, 0, 0, 0);
-  check("canSetBusParams", stat);
-  if (stat != canOK) {
-    goto ErrorExit;
+  pthread_attr_t attr;
+  int rc;
+  memset(&attr, 0, sizeof(pthread_attr_t));
+  if ((rc = pthread_attr_init(&attr)) != 0) {
+      printf("Failed to initialize attribute %d", rc);
+      return -1;
   }
-  stat = canBusOn(hnd);
-  check("canBusOn", stat);
-  if (stat != canOK) {
-    goto ErrorExit;
+#if 0  
+  if (pthread_attr_setstacksize(&attr, MAX(stackSize, PTHREAD_STACK_MIN))) {
+      printf("Unable to set stack size");
+      return -1;
   }
-
-  do {
-    long id;
-    unsigned char msg[8];
-    unsigned int dlc;
-    unsigned int flag;
-    unsigned long time;
-
-    stat = canReadWait(hnd, &id, &msg, &dlc, &flag, &time, READ_WAIT_INFINITE);
-
-    if (stat == canOK) {
-      msgCounter++;
-      if (flag & canMSG_ERROR_FRAME) {
-        printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
-        continue;
+#endif
+  pthread_t thread[MAX_CHANNELS];
+  for(i=0; i<nr_channels; i++) {
+      pthread_create(&thread[i], &attr, read_thread, &hnd[i]);
+  }
+  for(i=0; i<nr_channels; i++) {
+      void *retval = NULL;
+      if(pthread_join(thread[i], &retval)) {
+          printf("Failed to stop and join thread");
       }
-      else {
-        unsigned j;
+  }
+  
 
-        printf("(%u) id:%ld dlc:%u data: ", msgCounter, id, dlc);
-        if (dlc > 8) {
-          dlc = 8;
-        }
-        for (j = 0; j < dlc; j++) {
-          printf("%2.2x ", msg[j]);
-        }
-      }
-      printf(" flags:0x%x time:%llu\n", flag, (unsigned long long)time);
-    }
-    else {
-      if (errno == 0) {
-        check("\ncanReadWait", stat);
-      }
-      else {
-        perror("\ncanReadWait error");
-      }
-    }
+ ErrorExit:
 
-  } while (stat == canOK);
-
-ErrorExit:
-
-  stat = canBusOff(hnd);
-  check("canBusOff", stat);
-  // usleep(50*1000); // Sleep just to get the last notification.
-  stat = canClose(hnd);
-  check("canClose", stat);
+  for(i=0; i<nr_channels; i++) {
+      stat = canBusOff(hnd[i]);
+      check("canBusOff", stat);
+      // usleep(50*1000); // Sleep just to get the last notification.
+      stat = canClose(hnd[i]);
+      check("canClose", stat);
+  }
   stat = canUnloadLibrary();
   check("canUnloadLibrary", stat);
 

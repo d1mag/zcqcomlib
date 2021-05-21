@@ -130,6 +130,8 @@ bool ZZenoCANChannel::open(int open_flags)
     }
 
 
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex); // Have to lock when sending usb-commands
+
     ZenoOpen cmd;
     ZenoOpenResponse reply;
 
@@ -137,7 +139,8 @@ bool ZZenoCANChannel::open(int open_flags)
     cmd.h.cmd_id = ZENO_CMD_OPEN;
     cmd.channel = uint8_t(channel_index);
     cmd.base_clock_divisor = uint8_t(usb_can_device->getClockResolution() / 1000);
-
+    printf("cmd.base_clock_divisor=%d\n", cmd.base_clock_divisor);
+    
     if ( open_flags & ZCANFlags::CanFD ) {
         cmd.can_fd_mode = 1;
         is_canfd_mode = true;
@@ -162,13 +165,15 @@ bool ZZenoCANChannel::open(int open_flags)
     base_clock_divisor = std::min(unsigned(reply.base_clock_divisor),1u);
 
     zDebug("Zeno - max outstanding TX: %d Base clock divisor: %d", reply.max_pending_tx_msgs, base_clock_divisor);
-
+    
     return true;
 }
 
 bool ZZenoCANChannel::close()
 {
     busOff();
+
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
 
     ZenoClose cmd;
     ZenoResponse reply;
@@ -214,6 +219,8 @@ bool ZZenoCANChannel::busOn()
     zDebug("ZenoCAN Ch%d Bus On", channel_index+1);
     if (!checkOpen()) return false;
 
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
+
     ZenoBusOn cmd;
     ZenoResponse reply;
 
@@ -240,6 +247,8 @@ bool ZZenoCANChannel::busOff()
     zDebug("ZenoCAN Ch%d Bus Off", channel_index+1);
     if (!checkOpen()) return false;
 
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
+
     ZenoBusOff cmd;
     ZenoResponse reply;
 
@@ -262,6 +271,8 @@ bool ZZenoCANChannel::setBusParameters(int bitrate, int sample_point, int sjw)
     ZUNUSED(sjw)
 
     if (!checkOpen()) return false;
+
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
 
     ZenoBitTiming cmd;
     ZenoResponse reply;
@@ -425,6 +436,8 @@ bool ZZenoCANChannel::setBusParametersFd(int bitrate, int sample_point, int sjw)
 
     if (!checkOpen()) return false;
 
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
+
     ZenoBitTiming cmd;
     ZenoResponse reply;
 
@@ -563,6 +576,8 @@ bool ZZenoCANChannel::setDriverMode(ZCANFlags::DriverMode driver_mode)
     ZenoOpMode cmd;
     ZenoResponse reply;
 
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
+
     memset(&cmd,0,sizeof(ZenoOpMode));
     cmd.h.cmd_id = ZENO_CMD_SET_OP_MODE;
     cmd.channel = uint8_t(channel_index);
@@ -593,39 +608,42 @@ bool ZZenoCANChannel::setDriverMode(ZCANFlags::DriverMode driver_mode)
 bool ZZenoCANChannel::readFromRXFifo(ZZenoCANChannel::FifoRxCANMessage& rx,
                                      int timeout_in_ms)
 {
-    std::unique_lock<std::mutex> lock(rx_message_fifo_mutex);
+    std::unique_lock<std::mutex> lock_rx(rx_message_fifo_mutex);
+    
     if ( rx_message_fifo.isEmpty()) {
         if ( timeout_in_ms != -1) {
             std::chrono::milliseconds timeout(timeout_in_ms);
             /* Wait for RX FIFO */
             std::cv_status rc;
-            rc = rx_message_fifo_cond.wait_for(lock,timeout);
+            rc = rx_message_fifo_cond.wait_for(lock_rx,timeout);
             if(rc == std::cv_status::no_timeout) {
 #if 0
                 // Should not be needed
                 /* If RX FIFO is still empty */
                 if ( rx_message_fifo.isEmpty() ) {
-                    rx_message_fifo_mutex.unlock();
                     printf("Got signal, but nothing in fifo?\n");
                     return false;
                 }
 #endif
             } else {
+                //printf("timeout\n");
+#if 0
                 if ( rx_message_fifo.isEmpty() ) {
-                    rx_message_fifo_mutex.unlock();
+                    printf("timeout and is empty?\n");
                     return false;
                 } else {
                     printf("Got something, even if timeout?\n");
                 }
+#endif
+                return false;
             }
         } else {
             /* Infinite wait */
-            rx_message_fifo_cond.wait(lock);
+            rx_message_fifo_cond.wait(lock_rx);
 #if 0
             // Should not be needed
             /* If RX FIFO is still empty */
             if ( rx_message_fifo.isEmpty() ) {
-                rx_message_fifo_mutex.unlock();
                 return false;
             }
 #endif
@@ -634,7 +652,6 @@ bool ZZenoCANChannel::readFromRXFifo(ZZenoCANChannel::FifoRxCANMessage& rx,
     }
 
     rx = rx_message_fifo.read();
-    rx_message_fifo_mutex.unlock(); // we are done reading
     return true;
 }
 
@@ -648,6 +665,9 @@ void ZZenoCANChannel::dispatchRXEvent(ZZenoCANChannel::FifoRxCANMessage* rx_mess
     d.d.msg.id = rx_message->id;
     d.d.msg.dlc = rx_message->dlc;
     d.d.msg.flags = rx_message->flags;
+    if(rx_message->dlc > 64) {
+        printf("bad dlc %d\n", rx_message->dlc);
+    }
     memcpy(d.d.msg.msg,rx_message->data,std::min(int(rx_message->dlc),64));
 
     event_callback(d);
@@ -756,7 +776,7 @@ ZCANFlags::SendResult ZZenoCANChannel::send(const uint32_t id,
 
     memcpy(request.data, msg, 8);
 
-    std::unique_lock<std::mutex> tx_lock;
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
     tx_request_count ++;
     if ( tx_request_count >= int(max_outstanding_tx_requests) ) {
         if (timeout_in_ms > 0) {
@@ -971,11 +991,10 @@ int ZZenoCANChannel::getBusLoad()
 
 void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 {
-    std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
-
+    std::unique_lock<std::mutex> lock_rx(rx_message_fifo_mutex);
+    
     if ( rx_message_fifo.available() == 0 ) {
         zDebug("ZenoCAN Ch%d Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
-        rx_message_fifo_mutex.unlock();
         return;
     }
 
@@ -983,21 +1002,21 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
     rx_message->timestamp = message.timestamp | (uint64_t(message.timestamp_msb) << 32);
     rx_message->id        = message.id;
     rx_message->flags     = message.flags;
-    rx_message->dlc       = message.dlc;
+    rx_message->dlc       = message.dlc; // Should be 1-8
     memcpy(rx_message->data, message.data,8);
 
-    rx_message_fifo.write();
     dispatchRXEvent(rx_message);
-    rx_message_fifo_cond.notify_one();
-    rx_message_fifo_mutex.unlock();
+    rx_message_fifo.write();
+    rx_message_fifo_cond.notify_one(); // We are definately done with 1-8 bytes
 }
 
 void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 {
     if ( message_p1.dlc <= 18 ) {
+        std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
+        
         if ( rx_message_fifo.available() == 0 ) {
             zDebug("ZenoCAN Ch%d P1 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
-            rx_message_fifo_mutex.unlock();
             return;
         }
 
@@ -1008,10 +1027,9 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
         rx_message->dlc       = message_p1.dlc;
         memcpy(rx_message->data, message_p1.data, message_p1.dlc);
 
-        rx_message_fifo.write();
         dispatchRXEvent(rx_message);
-        rx_message_fifo_cond.notify_one();
-        rx_message_fifo_mutex.unlock(); // We are definately done with 1-18 bytes
+        rx_message_fifo.write();
+        rx_message_fifo_cond.notify_one(); // We are definately done with 1-18 bytes
     }
     else {
         canfd_msg_p1 = message_p1;
@@ -1020,10 +1038,16 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 
 void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
 {
+    if ( canfd_msg_p1.dlc < 18 ) {
+        memset(&canfd_msg_p1, 0 , sizeof(canfd_msg_p1)); // Out of sync, skip message
+        return;
+    }
+
     if ( canfd_msg_p1.dlc <= 46 ) {
+        std::unique_lock<std::mutex> lock_rx(rx_message_fifo_mutex);
+        
         if ( rx_message_fifo.available() == 0 ) {
             zDebug("ZenoCAN Ch%d P2 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
-            rx_message_fifo_mutex.unlock();
             return;
         }
 
@@ -1035,10 +1059,9 @@ void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
 
         memcpy(rx_message->data,      canfd_msg_p1.data, 18);
         memcpy(rx_message->data + 18, message_p2.data,   canfd_msg_p1.dlc - 18);
-        rx_message_fifo.write();
         dispatchRXEvent(rx_message);
-        rx_message_fifo_cond.notify_one();
-        rx_message_fifo_mutex.unlock(); // We are definately done with 18-45 bytes
+        rx_message_fifo.write();
+        rx_message_fifo_cond.notify_one(); // We are definately done with 18-45 bytes
     }
     else {
         canfd_msg_p2 = message_p2;
@@ -1049,17 +1072,16 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
 {
     // QByteArray b = QByteArray::fromRawData(reinterpret_cast<char*>(message_p3.data), int(18));
     // qDebug() << "P3 data" << b.toHex('-');
+    std::unique_lock<std::mutex> lock_rx(rx_message_fifo_mutex);
 
     if ( canfd_msg_p1.dlc < 46 ) {
         memset(&canfd_msg_p1, 0 , sizeof(canfd_msg_p1));
         memset(&canfd_msg_p2, 0 , sizeof(canfd_msg_p2));
-        rx_message_fifo_mutex.unlock();
         return;
     }
 
     if ( rx_message_fifo.available() == 0 ) {
         zDebug("ZenoCAN Ch%d P3 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
-        rx_message_fifo_mutex.unlock();
         return;
     }
 
@@ -1069,25 +1091,27 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
     rx_message->flags     = canfd_msg_p1.flags;
     rx_message->dlc       = canfd_msg_p1.dlc;
 
+    dispatchRXEvent(rx_message);
     memcpy(rx_message->data,      canfd_msg_p1.data, 18);
     memcpy(rx_message->data + 18, canfd_msg_p2.data, 28);
     memcpy(rx_message->data + 46, message_p3.data,   canfd_msg_p1.dlc - 46);
 
     rx_message_fifo.write();
-    dispatchRXEvent(rx_message);
 
-    rx_message_fifo_cond.notify_one();
-
+#if 0
+    // Skip memset to save cpu-usage. Should not be needed
     memset(&canfd_msg_p1, 0 , sizeof(canfd_msg_p1));
     memset(&canfd_msg_p2, 0 , sizeof(canfd_msg_p2));
-    rx_message_fifo_mutex.unlock(); // We are definately done with 46-64 bytes
+#else
+    canfd_msg_p1.dlc = 0; // just clear dlc which is most important
+#endif
+    rx_message_fifo_cond.notify_one(); // We are definately done with 46-64 bytes
 }
+
 
 void ZZenoCANChannel::txAck(ZenoTxCANRequestAck& tx_ack)
 {
-    tx_message_fifo_mutex.lock();
-    tx_message_fifo_cond.notify_one();
-
+    std::unique_lock<std::mutex> lock_tx(tx_message_fifo_mutex);
     // static int count = 0;
 
     int tx_count = int(tx_message_fifo.count());
@@ -1124,11 +1148,10 @@ void ZZenoCANChannel::txAck(ZenoTxCANRequestAck& tx_ack)
                 return;
             }
             rx_message_fifo.write(message);
-            rx_message_fifo_cond.notify_one();
 
             dispatchTXEvent(&message);
 
-            rx_message_fifo_mutex.unlock();
+            rx_message_fifo_cond.notify_one();
             return;
         }
 
@@ -1136,13 +1159,15 @@ void ZZenoCANChannel::txAck(ZenoTxCANRequestAck& tx_ack)
         tx_message_fifo.write(m);
     }
 
-    tx_message_fifo_mutex.unlock();
+    tx_message_fifo_cond.notify_one();
     zDebug("ZenoCAN Ch%d -- TX ack with transId: %d not queued", channel_index+1, tx_ack.trans_id);
 }
 
 bool ZZenoCANChannel::getZenoDeviceTimeInUs(uint64_t& timestamp_in_us)
 {
     if (!checkOpen()) return false;
+
+    std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex);
 
     ZenoReadClock cmd;
     ZenoReadClockResponse reply;
@@ -1182,13 +1207,11 @@ ZCANDriver* ZZenoCANChannel::getCANDriver() const
 
 void ZZenoCANChannel::flushRxFifo()
 {
-    std::lock_guard<std::mutex> lock(tx_message_fifo_mutex);
     rx_message_fifo.clear();
 }
 
 void ZZenoCANChannel::flushTxFifo()
 {
-    std::lock_guard<std::mutex> lock(tx_message_fifo_mutex);
     tx_message_fifo.clear();
     tx_request_count = 0;
     tx_next_trans_id = 0;
@@ -1206,7 +1229,7 @@ bool ZZenoCANChannel::checkOpen()
     return true;
 }
 
-bool ZZenoCANChannel::waitForSpaceInTxFifo(std::unique_lock<std::mutex>& lock, int& timeout_in_ms)
+bool ZZenoCANChannel::waitForSpaceInTxFifo(std::unique_lock<std::mutex>& lock_tx, int& timeout_in_ms)
 {
     auto t_start = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()).time_since_epoch();
     std::chrono::milliseconds timeout(timeout_in_ms);
@@ -1215,15 +1238,19 @@ bool ZZenoCANChannel::waitForSpaceInTxFifo(std::unique_lock<std::mutex>& lock, i
             tx_message_fifo.count() >=  max_outstanding_tx_requests) {
         std::cv_status wait_result;
 
-        wait_result = tx_message_fifo_cond.wait_for(lock, timeout);
+        wait_result = tx_message_fifo_cond.wait_for(lock_tx, timeout);
         // qDebug()  << "ZenoCAN-Ch" << channel_index  << "wait for TX space" << tx_message_fifo.count() << tx_ack_received << wait_success;
 
         auto t_now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()).time_since_epoch();
         timeout -= (t_now - t_start);
 
         if (wait_result == std::cv_status::no_timeout) break;
+        tx_message_fifo_mutex.unlock();
     }
 
     timeout_in_ms = timeout.count();
-    return tx_message_fifo.count() < max_outstanding_tx_requests;
+    int tx_count = tx_message_fifo.count();
+    tx_message_fifo_mutex.unlock();
+    
+    return tx_count < max_outstanding_tx_requests;
 }

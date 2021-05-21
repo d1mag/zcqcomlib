@@ -12,7 +12,7 @@ if (UNIX)
       set(CMAKE_CXX_FLAGS -pg)
       set(CMAKE_EXE_LINKER_FLAGS -pg)
       set(CMAKE_SHARED_LINKER_FLAGS -pg)
-    endif (CMAKE_BUILD_TYPE)
+    endif(CMAKE_BUILD_TYPE MATCHES Debug)
 endif (UNIX)
 
 if (WIN32)
@@ -85,8 +85,8 @@ set(INLCUDE_DIRS
 
 add_library(zcqcomlib SHARED ${SOURCES} ${HEADERS} )
 
-target_link_libraries(zcqcomlib ${LIBUSB_LIBRARIES})
+target_link_libraries(zcqcomlib ${LIBUSB_LIBRARIES} -lpthread)
 target_include_directories(zcqcomlib PUBLIC ${INLCUDE_DIRS})
-target_compile_options(zcqcomlib PUBLIC ${LIBUSB_CFLAGS_OTHER})
+target_compile_options(zcqcomlib PUBLIC ${LIBUSB_CFLAGS_OTHER} -pthread)
 
 add_subdirectory(examples)
