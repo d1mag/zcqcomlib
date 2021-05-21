@@ -182,6 +182,10 @@ void *read_thread(void *v)
             stat = canOK;
         } else if (stat == canOK) {
             msgCounter++;
+            if(flag & 0x80) {
+                printf("overrun on can%d\n", *hnd);
+                //continue;
+            }
             if (flag & canMSG_ERROR_FRAME) {
                 printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
                 error_frame_cnt[*hnd]++;
@@ -357,11 +361,11 @@ int main(int argc, char *argv[])
           return -1;
       }
 
-      unsigned long events = canNOTIFY_STATUS | canNOTIFY_ENVVAR;
+      unsigned long events = canNOTIFY_STATUS | canNOTIFY_ENVVAR | canNOTIFY_ERROR;
       if(use_event) {
           printf("setNotify on all event\n");
           // skip notify if running silient... just want to test read-performacne.
-          events |= canNOTIFY_RX | canNOTIFY_TX | canNOTIFY_ERROR;
+          events |= canNOTIFY_RX | canNOTIFY_TX;
       }
       stat = canSetNotify(hnd[i], notifyCallback, events, (char*)0);
       check("canSetNotify", stat);
