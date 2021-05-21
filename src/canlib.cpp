@@ -199,7 +199,15 @@ canStatus CANLIBAPI canSetBusParams (const CanHandle handle,
     default:
         return canERR_PARAM;
     }
-    bool r = can_channel->setBusParameters(bitrate,70,int(sjw));
+    unsigned int divisor = 70;
+#if 0
+    if(handle > 3) {
+        divisor = 70;
+    } else {
+        divisor = 1;
+    }
+#endif
+    bool r = can_channel->setBusParameters(bitrate,divisor,int(sjw));
     if (!r) return canERR_INTERNAL;
 
     return canOK;
@@ -238,7 +246,15 @@ canStatus CANLIBAPI canSetBusParamsFd(const CanHandle handle,
     default:
         return canERR_PARAM;
     }
-    bool r = can_channel->setBusParametersFd(bitrate,70,int(sjw_brs));
+    unsigned int divisor = 70;
+#if 0
+    if(handle > 3) {
+        divisor = 70;
+    } else {
+        divisor = 1;
+    }
+#endif
+    bool r = can_channel->setBusParametersFd(bitrate,divisor,int(sjw_brs));
     if (!r) return canERR_INTERNAL;
 
     return canOK;

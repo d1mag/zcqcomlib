@@ -69,7 +69,9 @@ long timeout = READ_WAIT_INFINITE;
 long max_idle_time = 0;
 long loops = 0;
 #define MAX_CHANNELS 6
-int channel[MAX_CHANNELS];
+int channel[MAX_CHANNELS] = { 0 };
+int error_cnt[MAX_CHANNELS] = { 0 };
+int error_frame_cnt[MAX_CHANNELS] = { 0 };
 int check_cansequence = 0;
 
 static void check(char* id, canStatus stat)
@@ -182,6 +184,7 @@ void *read_thread(void *v)
             msgCounter++;
             if (flag & canMSG_ERROR_FRAME) {
                 printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
+                error_frame_cnt[*hnd]++;
                 continue;
             }
 
@@ -194,6 +197,7 @@ void *read_thread(void *v)
                     unsigned int missing;
                     if(msg[0] && (msg[0] == next_expected_id)) {
                         printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", *hnd, msg[0], time, last_time);
+                        error_cnt[*hnd]++;
                     } else {
                         if(msg[0] < next_expected_id) {
                             missing = next_expected_id - msg[0];
@@ -201,6 +205,7 @@ void *read_thread(void *v)
                             missing = msg[0] - next_expected_id;
                         }
                         printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld)\n", *hnd, next_expected_id, msg[0], missing, time-last_time, time, last_time);
+                        error_cnt[*hnd]++;
                     }
                 }
                 if(next_expected_id == 0xFF) {
@@ -219,7 +224,7 @@ void *read_thread(void *v)
                 else {
                     unsigned j;
 
-                    printf("id:%lx dlc:%u data: ", id, dlc);
+                    printf("can%d id:%lx dlc:%u data: ", *hnd, id, dlc);
                     if (dlc > 8) {
                         dlc = 8;
                     }
@@ -242,7 +247,7 @@ void *read_thread(void *v)
         if(loops && (msgCounter > loops)) break;
     } while (stat == canOK);
 
-    printf("can%d received %lu frames (%lu bytes)\n", *hnd, (unsigned long)msgCounter, (unsigned long)nr_bytes);
+    printf("can%d received %lu frames (%lu bytes) (error_cnt=%d %d)\n", *hnd, (unsigned long)msgCounter, (unsigned long)nr_bytes, error_cnt[*hnd], error_frame_cnt[*hnd]);
 }
 
 
@@ -254,6 +259,7 @@ int main(int argc, char *argv[])
   int i;
   long loops = 0;
   int nr_channels = 0;
+  int use_event = 0;
   int bitrate = canBITRATE_500K;
   
    struct option long_options[] = {
@@ -265,7 +271,7 @@ int main(int argc, char *argv[])
    if (argc < 2) {
        printUsageAndExit(argv[0]);
    }
-   while ((opt = getopt_long(argc, argv, "hVvl:t:b:sr", long_options, NULL)) != -1) {
+   while ((opt = getopt_long(argc, argv, "hVvl:t:b:sre", long_options, NULL)) != -1) {
        switch (opt) {
        case 'h':
            printUsageAndExit(argv[0]);
@@ -273,6 +279,10 @@ int main(int argc, char *argv[])
 
        case 'r':
            check_cansequence = 1;
+           break;
+
+       case 'e':
+           use_event = 1;
            break;
 
        case 'v':
@@ -347,13 +357,15 @@ int main(int argc, char *argv[])
           return -1;
       }
 
-      if(!silent) {
+      unsigned long events = canNOTIFY_STATUS | canNOTIFY_ENVVAR;
+      if(use_event) {
           printf("setNotify on all event\n");
           // skip notify if running silient... just want to test read-performacne.
-          stat = canSetNotify(hnd[i], notifyCallback, canNOTIFY_RX | canNOTIFY_TX | canNOTIFY_ERROR | canNOTIFY_STATUS | canNOTIFY_ENVVAR, (char*)0);
-          check("canSetNotify", stat);
+          events |= canNOTIFY_RX | canNOTIFY_TX | canNOTIFY_ERROR;
       }
-  
+      stat = canSetNotify(hnd[i], notifyCallback, events, (char*)0);
+      check("canSetNotify", stat);
+      
       stat = canSetBusParams(hnd[i], bitrate, 0, 0, 0, 0, 0);
       check("canSetBusParams", stat);
       if (stat != canOK) {

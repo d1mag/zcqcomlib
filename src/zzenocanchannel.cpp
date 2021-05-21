@@ -1013,7 +1013,8 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
 {
     if ( message_p1.dlc <= 18 ) {
-        std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
+        //std::lock_guard<std::mutex> lock(rx_message_fifo_mutex);
+        std::unique_lock<std::mutex> lock_rx(rx_message_fifo_mutex);
         
         if ( rx_message_fifo.available() == 0 ) {
             zDebug("ZenoCAN Ch%d P1 -Zeno: RX buffer overflow: %d - %d", channel_index+1,rx_message_fifo.count(), rx_message_fifo.isEmpty());
