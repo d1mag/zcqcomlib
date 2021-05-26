@@ -199,15 +199,7 @@ canStatus CANLIBAPI canSetBusParams (const CanHandle handle,
     default:
         return canERR_PARAM;
     }
-    unsigned int divisor = 70;
-#if 0
-    if(handle > 3) {
-        divisor = 70;
-    } else {
-        divisor = 1;
-    }
-#endif
-    bool r = can_channel->setBusParameters(bitrate,divisor,int(sjw));
+    bool r = can_channel->setBusParameters(bitrate,70,int(sjw));
     if (!r) return canERR_INTERNAL;
 
     return canOK;
@@ -246,15 +238,7 @@ canStatus CANLIBAPI canSetBusParamsFd(const CanHandle handle,
     default:
         return canERR_PARAM;
     }
-    unsigned int divisor = 70;
-#if 0
-    if(handle > 3) {
-        divisor = 70;
-    } else {
-        divisor = 1;
-    }
-#endif
-    bool r = can_channel->setBusParametersFd(bitrate,divisor,int(sjw_brs));
+    bool r = can_channel->setBusParametersFd(bitrate,70,int(sjw_brs));
     if (!r) return canERR_INTERNAL;
 
     return canOK;
@@ -524,20 +508,20 @@ canStatus CANLIBAPI canReadSpecificSkip (const CanHandle handle,
 
 canStatus CANLIBAPI canSetNotify (const CanHandle handle,
                                   void (*callback)(canNotifyData *),
-                                  unsigned int notify_fFlags,
+                                  unsigned int notifyFlags,
                                   void *tag)
 {
-    ZUNUSED(notify_fFlags)
+    ZUNUSED(notifyFlags)
 
     auto can_channel = getChannel(handle);
     if ( can_channel == nullptr ) return canERR_INVHANDLE;
 
     if ( callback == nullptr ) {
-        can_channel->setEventCallback(std::function<void(const ZCANChannel::EventData&)>());
+        can_channel->setEventCallback(notifyFlags, std::function<void(const ZCANChannel::EventData&)>());
         return canOK;
     }
 
-    can_channel->setEventCallback([=](const ZCANChannel::EventData& data) {
+    can_channel->setEventCallback(notifyFlags, [=](const ZCANChannel::EventData& data) {
         canNotifyData can_notify_data;
         can_notify_data.tag = tag;
 
@@ -1270,11 +1254,11 @@ kvStatus CANLIBAPI kvTimeDomainRemoveHandle (kvTimeDomain domain,
 kvStatus CANLIBAPI kvSetNotifyCallback (const CanHandle handle,
                                         kvCallback_t callback,
                                         void* context,
-                                        unsigned int notify_fFlags)
+                                        unsigned int notifyFlags)
 {
     ZUNUSED(callback)
     ZUNUSED(context)
-    ZUNUSED(notify_fFlags)
+    ZUNUSED(notifyFlags)
 
     auto can_channel = getChannel(handle);
     if ( can_channel == nullptr ) return canERR_INVHANDLE;

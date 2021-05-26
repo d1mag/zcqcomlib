@@ -67,7 +67,7 @@ public:
                     const uint8_t dlc, const uint32_t flags,
                     int timeout_in_ms) override;
 
-    void setEventCallback(std::function<void(const EventData&)> callback) override;
+    void setEventCallback(unsigned int notifyFlags, std::function<void(const EventData&)> callback) override;
 
     uint64_t getSerialNumber() override;
     uint32_t getFirmwareVersion() override;
@@ -97,6 +97,8 @@ private:
 
     int channel_index;
     std::atomic<int> is_open;
+    unsigned long microseconds_since_epoch;
+
     bool is_canfd_mode;
     std::atomic<int> initial_timer_adjustment_done;
     ZZenoUSBDevice* usb_can_device;
@@ -156,6 +158,7 @@ private:
     unsigned int base_clock_divisor;
 
     std::function<void(const EventData&)> event_callback;
+    unsigned int notify_flags;
 
     friend class ZZenoUSBDevice;
 };

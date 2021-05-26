@@ -129,9 +129,13 @@ bool ZZenoCANChannel::open(int open_flags)
         return false;
     }
 
-
     std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex); // Have to lock when sending usb-commands
 
+    microseconds_since_epoch = std::chrono::system_clock::now().time_since_epoch() / std::chrono::microseconds(1);
+    if(channel_index >= 4) {
+        microseconds_since_epoch *= 70; // Not sure if this can overflow..
+    }
+    
     ZenoOpen cmd;
     ZenoOpenResponse reply;
 
@@ -139,6 +143,7 @@ bool ZZenoCANChannel::open(int open_flags)
     cmd.h.cmd_id = ZENO_CMD_OPEN;
     cmd.channel = uint8_t(channel_index);
     cmd.base_clock_divisor = uint8_t(usb_can_device->getClockResolution() / 1000);
+
     printf("cmd.base_clock_divisor=%d\n", cmd.base_clock_divisor);
     
     if ( open_flags & ZCANFlags::CanFD ) {
@@ -164,6 +169,13 @@ bool ZZenoCANChannel::open(int open_flags)
     initial_timer_adjustment_done = 0;
     base_clock_divisor = std::min(unsigned(reply.base_clock_divisor),1u);
 
+#if 1
+    printf("1cmd.base_clock_divisor=%d\n", base_clock_divisor);
+    if(channel_index >= 4) {
+        base_clock_divisor = 70;
+    }
+#endif
+    
     zDebug("Zeno - max outstanding TX: %d Base clock divisor: %d", reply.max_pending_tx_msgs, base_clock_divisor);
     
     return true;
@@ -659,6 +671,11 @@ void ZZenoCANChannel::dispatchRXEvent(ZZenoCANChannel::FifoRxCANMessage* rx_mess
 {
     if (!event_callback) return;
 
+    if(!(notify_flags & canNOTIFY_RX)) {
+        // No use to copy message and create an event if nobody wants it
+        return;
+    }
+    
     EventData d;
     d.event_type = RX;
     d.timetstamp = rx_message->timestamp;
@@ -676,6 +693,11 @@ void ZZenoCANChannel::dispatchRXEvent(ZZenoCANChannel::FifoRxCANMessage* rx_mess
 void ZZenoCANChannel::dispatchTXEvent(ZZenoCANChannel::FifoRxCANMessage* tx_message)
 {
     if (!event_callback) return;
+
+    if(!(notify_flags & canNOTIFY_TX)) {
+        // No use to copy message and create an event if nobody wants it
+        return;
+    }
 
     EventData d;
     d.event_type = TX;
@@ -712,12 +734,14 @@ ZCANFlags::ReadResult ZZenoCANChannel::readWait(uint32_t& id, uint8_t *msg,
         flags |= ErrorFrame | InternalFrame;
         flags |= (rx.flags & ZenoCANErrorMask);
     }
-    if (rx.flags & ZenoCANErrorHWOverrun)
+    if (rx.flags & ZenoCANErrorHWOverrun) {
         flags |= ErrorHWOverrun;
-
-    if (rx.flags & ZenoCANFlagTxAck)
+    }
+    
+    if (rx.flags & ZenoCANFlagTxAck) {
         flags |= TxMsgAcknowledge;
-
+    }
+    
     if ( is_canfd_mode ) {
         if (rx.flags & ZenoCANFlagFD) {
             //flags |= CanFDFrame; // This is not available for C-application zcanflags.h:CanFDFrame=0x80000
@@ -738,7 +762,7 @@ ZCANFlags::ReadResult ZZenoCANChannel::readWait(uint32_t& id, uint8_t *msg,
     bus_active_bit_count += msg_bit_count;
 
     driver_timestmap_in_us = uint64_t(rx.timestamp / base_clock_divisor);
-
+    
     memcpy(msg, rx.data, rx.dlc);
 
     return ReadStatusOK;
@@ -816,10 +840,11 @@ ZCANFlags::SendResult ZZenoCANChannel::send(const uint32_t id,
     return SendStatusOK;
 }
 
-void ZZenoCANChannel::setEventCallback(std::function<void(const EventData&)> callback)
+void ZZenoCANChannel::setEventCallback(unsigned int notifyFlags, std::function<void(const EventData&)> callback)
 {
     if (!checkOpen()) return;
     event_callback = callback;
+    notify_flags = notifyFlags;
 }
 
 ZCANFlags::SendResult ZZenoCANChannel::sendFD(const uint32_t id,
@@ -1000,6 +1025,9 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = message.timestamp | (uint64_t(message.timestamp_msb) << 32);
+
+    rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
+
     rx_message->id        = message.id;
     rx_message->flags     = message.flags;
     rx_message->dlc       = message.dlc; // Should be 1-8
@@ -1022,7 +1050,10 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
         }
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
-        rx_message->timestamp = message_p1.timestamp; // This is increased to 64 bits
+        rx_message->timestamp = message_p1.timestamp; // This is only 32 bits
+
+        rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
+        
         rx_message->id        = message_p1.id;
         rx_message->flags     = message_p1.flags;
         rx_message->dlc       = message_p1.dlc;
@@ -1054,6 +1085,9 @@ void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
         rx_message->timestamp = canfd_msg_p1.timestamp;
+
+        rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
+
         rx_message->id        = canfd_msg_p1.id;
         rx_message->flags     = canfd_msg_p1.flags;
         rx_message->dlc       = canfd_msg_p1.dlc;
@@ -1088,6 +1122,9 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = canfd_msg_p1.timestamp;
+
+    rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
+
     rx_message->id        = canfd_msg_p1.id;
     rx_message->flags     = canfd_msg_p1.flags;
     rx_message->dlc       = canfd_msg_p1.dlc;

@@ -100,7 +100,7 @@ public:
         } d;
     };
 
-    virtual void setEventCallback(std::function<void(const EventData&)> callback) = 0;
+    virtual void setEventCallback(unsigned int notifyFlags, std::function<void(const EventData&)> callback) = 0;
 
     virtual uint64_t getDeviceClock() = 0;
 

@@ -1250,7 +1250,7 @@ canStatus CANLIBAPI canReadSpecificSkip (const CanHandle hnd,
  */
 canStatus CANLIBAPI canSetNotify (const CanHandle hnd,
                                   void (*callback)(canNotifyData *),
-                                  unsigned int notify_fFlags,
+                                  unsigned int notifyFlags,
                                   void *tag);
 
 /**

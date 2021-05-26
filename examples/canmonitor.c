@@ -135,6 +135,12 @@ void notifyCallback(canNotifyData *data) {
   case canEVENT_RX:
     printf("CAN Rx Event\n");
     break;
+  case canEVENT_ENVVAR:
+      printf("CAN EnvVar Event\n");
+      break;
+  case canEVENT_BUSONOFF:
+      printf("CAN BusOff Event\n");
+      break;
   }
   return;
 }
@@ -174,20 +180,22 @@ void *read_thread(void *v)
         stat = canReadWait(*hnd, &id, &msg, &dlc, &flag, &time, timeout);
         if(stat == canERR_TIMEOUT) {
             idle_time++;
-            printf("can%d Idle waiting %d / %ld\n", *hnd, idle_time, max_idle_time);
+            printf("can%d Idle waiting %d / %ld\n", channel[*hnd], idle_time, max_idle_time);
             if(idle_time >= max_idle_time) {
-                printf("can%d Exit since idle %ld seconds\n", *hnd, max_idle_time);
+                printf("can%d Exit since idle %ld seconds\n", channel[*hnd], max_idle_time);
                 break;
             }
             stat = canOK;
         } else if (stat == canOK) {
             msgCounter++;
-            if(flag & 0x80) {
-                printf("overrun on can%d\n", *hnd);
+            if (flag & canSTAT_HW_OVERRUN /* 0x200 ErrorHWOverrun */) { 
+                printf("can%d HW_OVERRUN flags:0x%x time:%llu\n", channel[*hnd], flag, (unsigned long long)time);
+                error_frame_cnt[*hnd]++;
                 //continue;
             }
+
             if (flag & canMSG_ERROR_FRAME) {
-                printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
+                printf("can%d ERROR FRAME flags:0x%x time:%llu\n", channel[*hnd], flag, (unsigned long long)time);
                 error_frame_cnt[*hnd]++;
                 continue;
             }
@@ -200,7 +208,7 @@ void *read_thread(void *v)
                     // Verify frame-id with generated cansequence frames
                     unsigned int missing;
                     if(msg[0] && (msg[0] == next_expected_id)) {
-                        printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", *hnd, msg[0], time, last_time);
+                        printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", channel[*hnd], msg[0], time, last_time);
                         error_cnt[*hnd]++;
                     } else {
                         if(msg[0] < next_expected_id) {
@@ -208,7 +216,7 @@ void *read_thread(void *v)
                         } else {
                             missing = msg[0] - next_expected_id;
                         }
-                        printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld)\n", *hnd, next_expected_id, msg[0], missing, time-last_time, time, last_time);
+                        printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld) flag=0x%X\n", channel[*hnd], next_expected_id, msg[0], missing, time-last_time, time, last_time, flag);
                         error_cnt[*hnd]++;
                     }
                 }
@@ -228,7 +236,7 @@ void *read_thread(void *v)
                 else {
                     unsigned j;
 
-                    printf("can%d id:%lx dlc:%u data: ", *hnd, id, dlc);
+                    printf("can%d id:%lx dlc:%u data: ", channel[*hnd], id, dlc);
                     if (dlc > 8) {
                         dlc = 8;
                     }
@@ -251,7 +259,7 @@ void *read_thread(void *v)
         if(loops && (msgCounter > loops)) break;
     } while (stat == canOK);
 
-    printf("can%d received %lu frames (%lu bytes) (error_cnt=%d %d)\n", *hnd, (unsigned long)msgCounter, (unsigned long)nr_bytes, error_cnt[*hnd], error_frame_cnt[*hnd]);
+    printf("can%d received %lu frames (%lu bytes) (error_cnt=%d %d)\n", channel[*hnd], (unsigned long)msgCounter, (unsigned long)nr_bytes, error_cnt[*hnd], error_frame_cnt[*hnd]);
 }
 
 
