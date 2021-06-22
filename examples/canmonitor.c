@@ -59,6 +59,7 @@
 #include <getopt.h>
 #include <pthread.h>
 #include <string.h> // for memset
+#include <pthread.h>
 
 #define READ_WAIT_INFINITE    (unsigned long)(-1)
 
@@ -69,10 +70,13 @@ long timeout = READ_WAIT_INFINITE;
 long max_idle_time = 0;
 long loops = 0;
 #define MAX_CHANNELS 6
+canHandle hnd[MAX_CHANNELS];
+int can_ndx[MAX_CHANNELS] = { 0 };
 int channel[MAX_CHANNELS] = { 0 };
 int error_cnt[MAX_CHANNELS] = { 0 };
 int error_frame_cnt[MAX_CHANNELS] = { 0 };
 int check_cansequence = 0;
+pthread_mutex_t output_mutex;
 
 static void check(char* id, canStatus stat)
 {
@@ -160,14 +164,15 @@ int to_bitrate(int x)
 
 void *read_thread(void *v)
 {
-    canHandle *hnd = (canHandle *)v;
+    int can_ndx = *((int *)v);
+    int can_port = channel[can_ndx];
     canStatus stat;
     int idle_time = 0;
     int nr_bytes = 0;
     unsigned int msgCounter = 0;
     unsigned int next_expected_id = 0;
 
-    printf("thread started\n");
+    printf("can_ndx=%d can_port=%d can%d thread started\n", can_ndx, can_port, channel[can_ndx]);
 
     do {
         long id;
@@ -177,26 +182,30 @@ void *read_thread(void *v)
         unsigned long time;
         unsigned long last_time;
 
-        stat = canReadWait(*hnd, &id, &msg, &dlc, &flag, &time, timeout);
+        stat = canReadWait(hnd[can_ndx], &id, &msg, &dlc, &flag, &time, timeout);
         if(stat == canERR_TIMEOUT) {
             idle_time++;
-            printf("can%d Idle waiting %d / %ld\n", channel[*hnd], idle_time, max_idle_time);
+            printf("can%d Idle waiting %d / %ld\n", channel[can_ndx], idle_time, max_idle_time);
             if(idle_time >= max_idle_time) {
-                printf("can%d Exit since idle %ld seconds\n", channel[*hnd], max_idle_time);
+                printf("can%d Exit since idle %ld seconds\n", channel[can_ndx], max_idle_time);
                 break;
             }
             stat = canOK;
         } else if (stat == canOK) {
             msgCounter++;
             if (flag & canSTAT_HW_OVERRUN /* 0x200 ErrorHWOverrun */) { 
-                printf("can%d HW_OVERRUN flags:0x%x time:%llu\n", channel[*hnd], flag, (unsigned long long)time);
-                error_frame_cnt[*hnd]++;
+                pthread_mutex_lock(&output_mutex);
+                printf("can%d HW_OVERRUN flags:0x%x time:%llu\n", channel[can_ndx], flag, (unsigned long long)time);
+                pthread_mutex_unlock(&output_mutex);
+                error_frame_cnt[can_ndx]++;
                 //continue;
             }
 
             if (flag & canMSG_ERROR_FRAME) {
-                printf("can%d ERROR FRAME flags:0x%x time:%llu\n", channel[*hnd], flag, (unsigned long long)time);
-                error_frame_cnt[*hnd]++;
+                pthread_mutex_lock(&output_mutex);
+                printf("can%d ERROR FRAME flags:0x%x time:%llu\n", channel[can_ndx], flag, (unsigned long long)time);
+                pthread_mutex_unlock(&output_mutex);
+                error_frame_cnt[can_ndx]++;
                 continue;
             }
 
@@ -208,16 +217,20 @@ void *read_thread(void *v)
                     // Verify frame-id with generated cansequence frames
                     unsigned int missing;
                     if(msg[0] && (msg[0] == next_expected_id)) {
-                        printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", channel[*hnd], msg[0], time, last_time);
-                        error_cnt[*hnd]++;
+                        pthread_mutex_lock(&output_mutex);
+                        printf("Duplicate can%d frame? %02X (time=%ld last_time=%ld)\n", channel[can_ndx], msg[0], time, last_time);
+                        pthread_mutex_unlock(&output_mutex);
+                        error_cnt[can_ndx]++;
                     } else {
                         if(msg[0] < next_expected_id) {
                             missing = next_expected_id - msg[0];
                         } else {
                             missing = msg[0] - next_expected_id;
                         }
-                        printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld) flag=0x%X\n", channel[*hnd], next_expected_id, msg[0], missing, time-last_time, time, last_time, flag);
-                        error_cnt[*hnd]++;
+                        pthread_mutex_lock(&output_mutex);
+                        printf("Expecting can%d frame %02X, got %02X (missing %d) (time_diff=%ld %ld %ld) flag=0x%X\n", channel[can_ndx], next_expected_id, msg[0], missing, time-last_time, time, last_time, flag);
+                        pthread_mutex_unlock(&output_mutex);
+                        error_cnt[can_ndx]++;
                     }
                 }
                 if(next_expected_id == 0xFF) {
@@ -229,14 +242,14 @@ void *read_thread(void *v)
             }
 
             if(!silent) {
-
+                pthread_mutex_lock(&output_mutex);
                 if (flag & canMSG_ERROR_FRAME) {
                     printf("(%u) ERROR FRAME flags:0x%x time:%llu\n", msgCounter, flag, (unsigned long long)time);
                 }
                 else {
                     unsigned j;
 
-                    printf("can%d id:%lx dlc:%u data: ", channel[*hnd], id, dlc);
+                    printf("can%d id:%lx dlc:%u data: ", channel[can_ndx], id, dlc);
                     if (dlc > 8) {
                         dlc = 8;
                     }
@@ -245,6 +258,7 @@ void *read_thread(void *v)
                     }
                     printf(" flags:0x%x time:%llu\n", flag, (unsigned long long)time);
                 }
+                pthread_mutex_unlock(&output_mutex);
             }
         }
         else {
@@ -259,13 +273,12 @@ void *read_thread(void *v)
         if(loops && (msgCounter > loops)) break;
     } while (stat == canOK);
 
-    printf("can%d received %lu frames (%lu bytes) (error_cnt=%d %d)\n", channel[*hnd], (unsigned long)msgCounter, (unsigned long)nr_bytes, error_cnt[*hnd], error_frame_cnt[*hnd]);
+    printf("can%d received %lu frames (%lu bytes) (error_cnt=%d %d)\n", channel[can_ndx], (unsigned long)msgCounter, (unsigned long)nr_bytes, error_cnt[can_ndx], error_frame_cnt[can_ndx]);
 }
 
 
 int main(int argc, char *argv[])
 {
-  canHandle hnd[MAX_CHANNELS];
   canStatus stat;
   int opt;
   int i;
