@@ -30,33 +30,56 @@
  *
  */
 
-#ifndef ZCQCORE_H
-#define ZCQCORE_H
+#ifndef ZZENOTIMERSYNCH_H
+#define ZZENOTIMERSYNCH_H
 
 #include "zglobal.h"
-#include <string>
+#include <chrono>
+#include <stdint.h>
 
-class ZCANChannel;
-void initializeZCQCommLibrary();
+class ZZenoTimerSynch {
+public:
+    typedef std::chrono::microseconds ZTimeVal;
 
-void uninitializeZCQCommLibrary();
+    ZZenoTimerSynch(uint64_t _TIMER_wrap_around_mask =  0xffffffff,
+                    uint64_t _TIMER_wrap_around_step = 0x100000000);
+    virtual ~ZZenoTimerSynch();
 
-ZCANChannel* getCANChannel(unsigned can_channel_index);
+    void initializeDeviceTimeDrift();
 
-unsigned getNumberOfZCQCANChannels();
+    virtual bool getDeviceTimeInUs(int64_t& timestamp_in_us) = 0;
 
-unsigned getNumberOfZCQLINChannels();
+    ZTimeVal getLastDriverTimeStampInUs() const {
+        return last_driver_timestamp_in_us;
+    }    
 
-int getCANDeviceLocalChannelNr(int can_channel_index);
+    int64_t caluclateTimeStamp(const int64_t driver_timestamp_in_us, const double drift_factor);
+    void onReadTimeoutCheck();
 
-int getCANDeviceLocalChannelName(int can_channel_index, std::string& channel_name);
+    void synchToTimerOffset(ZTimeVal t);
 
-int getCANDeviceDescription(int can_channel_index, std::string& device_description);
+protected:
+    void adjustDeviceTimerWrapAround(int64_t& timer_timestamp_in_us);
+    void adjustEventTimestampWrapAround(int64_t& event_timestamp_in_us);
+    ZTimeVal systemTimeNow() const;
 
-int getCANDeviceFWVersion(int can_channel_index, uint32_t& fw_version);
+    /* Timer drift */    
+    ZTimeVal last_driver_timestamp_in_us;
+    ZTimeVal last_t0_timestamp_in_us;
+    ZTimeVal last_device_timestamp_in_us;
+    ZTimeVal last_event_timestamp_in_us;
+    uint64_t timer_msb_timestamp_part;
+    uint64_t event_msb_timestamp_part;
+    ZTimeVal synch_offset;
 
-int getCANDeviceSerialNumber(int can_channel_index, uint64_t& serial_number);
+    ZTimeVal average_round_trip_in_us;
+    ZTimeVal last_appl_timestamp_in_us;
 
-int getCANDeviceProductCode(int can_channel_index, uint64_t& product_code);
+    // VxReference<VxTimerBase> drift_timer;
 
-#endif /* ZCQCORE_H */
+    /* Wrap around masks */
+    const uint64_t TIMER_wrap_around_mask;
+    const uint64_t TIMER_wrap_around_step;
+};
+
+#endif /* ZZENOTIMERSYNCH_H */

@@ -30,72 +30,25 @@
  *
  */
 
-#ifndef ZGLOBAL_H
-#define ZGLOBAL_H
+#ifndef ZTHREADLOCALSTRING_H
+#define ZTHREADLOCALSTRING_H
 
-/**
-  * Detect compiler
-  */
-#if defined(__GNUC__)
-#define ZFUNC_INFO __PRETTY_FUNCTION__
-#elif defined(__clang__)
-#define ZFUNC_INFO __PRETTY_FUNCTION__
-#elif defined(_MSC_VER)
-// #define ZFUNC_INFO __FUNCDNAME__
-#define ZFUNC_INFO __FUNCTION__
-#else
-#endif
+#include "zglobal.h"
+#include <string>
 
+class ZThreadLocalString
+{
+public:
+    ZThreadLocalString();
+    ~ZThreadLocalString();
 
-#if defined(__cplusplus) && (__cplusplus < 201103L) && !defined(_MSC_VER)
-#    error C++11 compiler or newer is required fro this project.
-#endif
+    operator const std::string&();
 
-#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-   #define Z_OS_WINDOWS
-   #define ZATTR_FORMAT_PRINTF(A, B)
-   #ifdef _WIN64
-      #define Z_OS_WINDOWS_64
-   #else
-      #define Z_OS_WINDOWS_32
-   #endif
-#elif __APPLE__
-    #define Z_OS_APPLE
-    #include <TargetConditionals.h>
-    #if TARGET_IPHONE_SIMULATOR
-         #define Z_OS_IPHONE_SIM
-    #elif TARGET_OS_IPHONE
-        #define Z_OS_IPHONE
-    #elif TARGET_OS_MAC
-        #define Z_OS_MAC
-    #else
-    #   error "Unknown Apple platform"
-    #endif
-#elif __linux__
-    #define Z_OS_LINUX
+    ZThreadLocalString& operator=(const std::string& s);
 
-    #define ZATTR_FORMAT_PRINTF(A, B) \
-         __attribute__((format(printf, (A), (B))))
+    const char* c_str();
 
-#elif __unix__ // all unices not caught above
-    #define Z_OS_UNIX
-    #define ZATTR_FORMAT_PRINTF(A, B)
-#elif defined(_POSIX_VERSION)
-    #define Z_OS_POSIX
-    #define ZATTR_FORMAT_PRINTF(A, B)
-#else
-#   error "Unknown compiler"
-#endif
+private:
+};
 
-#define ZUNUSED(x) (void)x;
-
-#ifdef Z_OS_WINDOWS
-#    define ZDECL_EXPORT     __declspec(dllexport)
-#    define ZDECL_IMPORT     __declspec(dllimport)
-#elif defined(Z_OS_LINUX)
-#    define ZDECL_EXPORT     __attribute__((visibility("default")))
-#    define ZDECL_IMPORT     __attribute__((visibility("default")))
-#    define ZDECL_HIDDEN     __attribute__((visibility("hidden")))
-#endif
-
-#endif /* ZGLOBAL_H */
+#endif /* ZTHREADLOCALSTRING_H */

@@ -230,9 +230,8 @@ typedef struct {
     uint8_t read_count;
     uint8_t divisor;
     
-    uint8_t unused[10];
+    uint8_t unused[14];
 } ZenoReadClockResponse;
-
 
 typedef struct {
     ZenoHeader h;

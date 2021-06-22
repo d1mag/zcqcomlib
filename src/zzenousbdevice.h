@@ -45,8 +45,8 @@
 #define ZENO_USB_BULK_TRANSFER_TIMEOUT      60000 /* 60 seconds in ms */
 #define ZENO_USB_INTERRUPT_TRANSFER_TIMEOUT 60000 /* 60 seconds in ms */
 #define ZENO_USB_TX_TIMEOUT                  5000  /* 5 seconds in ms */
-#define ZENO_USB_MAX_PACKET_IN               3072
-#define ZENO_USB_MAX_PACKET_OUT              3072
+#define ZENO_USB_MAX_PACKET_IN               4096
+#define ZENO_USB_MAX_PACKET_OUT              4096
 // #define ZENO_MAX_OUTSTANDING_TX_REQUEST        31
 
 class ZUSBContext;
@@ -68,10 +68,10 @@ public:
     bool close();
     bool isOpen() const;
 
-    int getCANChannelCount() const;
+    uint32_t getCANChannelCount() const;
     ZRef<ZCANChannel> getCANChannel(unsigned int channel_index);
 
-    int getLINChannelCount() const;
+    uint32_t getLINChannelCount() const;
     ZRef<ZLINChannel> getLINChannel(unsigned int channel_index);
 
     uint32_t getSerialNumber() const;
@@ -105,6 +105,14 @@ public:
     }
     void hex_dump(const void *buffer, std::size_t bufsize, bool showPrintableChars = true);
 
+    double getDriftFactor() const {
+        return drift_factor;
+    }
+
+    int64_t getT2ClockRef() const {
+        return t2_e_clock_start_ref_in_us;
+    }
+
 protected:
     void freeTransfers();
     int getNextTransferIndex();
@@ -114,6 +122,9 @@ protected:
     void handleCommand(ZenoCmd* zeno_cmd);
     void startClockInt();
     void stopClockInt();
+    void ajdustDeviceTimeDrift(ZZenoTimerSynch::ZTimeVal device_time_in_us,
+                               ZZenoTimerSynch::ZTimeVal new_drift_time_in_us,
+                               ZZenoTimerSynch::ZTimeVal max_adjust);
 
     ZZenoCANDriver* driver;
     ZUSBContext* usb_context;
@@ -152,7 +163,7 @@ protected:
     std::vector<ZRef<ZZenoLINChannel> > lin_channel_list;
     std::string display_name;
 
-    mutable std::string last_error_text;
+    mutable ZThreadLocalString last_error_text;
 
     /* Reply state */
     int reply_timeout_in_ms;
@@ -170,9 +181,14 @@ protected:
     uint32_t fw_version;
 
     /* Clock info */
-    uint64_t t2_clock_start_ref_in_us;
+    int64_t t2_clock_start_ref_in_us;
+    int64_t t2_e_clock_start_ref_in_us;
     int init_calibrate_count;
-    int drift_time_in_us;
+    int64_t drift_time_in_us;
+
+    /* Timer drift */
+    ZZenoTimerSynch::ZTimeVal time_drift_in_us;
+    double   drift_factor;
 
 private:
     bool ___queueRequestUnlocked(ZenoCmd* request, std::unique_lock<std::mutex>& lock, int timeout_in_ms);
