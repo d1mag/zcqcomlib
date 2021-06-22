@@ -91,25 +91,24 @@ void uninitializeZCQCommLibrary()
     }
 }
 
-ZCANChannel* getCANChannel(int can_channel_index)
+ZCANChannel* getCANChannel(unsigned can_channel_index)
 {
     if ( __instance == nullptr ) return nullptr;
-    if (can_channel_index < 0) return nullptr;
-    if (can_channel_index >= int(__instance->can_channel_list.size())) return nullptr;
+    if (can_channel_index >= __instance->can_channel_list.size()) return nullptr;
 
     return __instance->can_channel_list[can_channel_index].get();
 }
 
-int getNumberOfZCQCANChannels()
+unsigned getNumberOfZCQCANChannels()
 {
     if ( __instance == nullptr ) return 0;
-    return __instance->can_channel_list.size();
+    return unsigned(__instance->can_channel_list.size());
 }
 
-int getNumberOfZCQLINChannels()
+unsigned getNumberOfZCQLINChannels()
 {
     if ( __instance == nullptr ) return 0;
-    return __instance->lin_channel_list.size();
+    return unsigned(__instance->lin_channel_list.size());
 }
 
 int getCANDeviceLocalChannelNr(int can_channel_index)
@@ -118,7 +117,7 @@ int getCANDeviceLocalChannelNr(int can_channel_index)
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    return __instance->can_channel_list[can_channel_index]->getChannelNr();
+    return __instance->can_channel_list[unsigned(can_channel_index)]->getChannelNr();
 }
 
 int getCANDeviceLocalChannelName(int can_channel_index, std::string& channel_name)
@@ -127,7 +126,7 @@ int getCANDeviceLocalChannelName(int can_channel_index, std::string& channel_nam
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    channel_name = __instance->can_channel_list[can_channel_index]->getObjectText();
+    channel_name = __instance->can_channel_list[unsigned(can_channel_index)]->getObjectText();
     return 0;
 }
 
@@ -137,7 +136,7 @@ int getCANDeviceDescription(int can_channel_index, std::string& device_descripti
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    device_description = __instance->can_channel_list[can_channel_index]->getDevicetText();
+    device_description = __instance->can_channel_list[unsigned(can_channel_index)]->getDevicetText();
 
     return 0;
 }
@@ -148,7 +147,7 @@ int getCANDeviceFWVersion(int can_channel_index, uint32_t& fw_version)
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    fw_version = __instance->can_channel_list[can_channel_index]->getFirmwareVersion();
+    fw_version = __instance->can_channel_list[unsigned(can_channel_index)]->getFirmwareVersion();
 
     return 0;
 }
@@ -159,7 +158,7 @@ int getCANDeviceProductCode(int can_channel_index, uint64_t& product_code)
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    product_code = __instance->can_channel_list[can_channel_index]->getProductCode();
+    product_code = __instance->can_channel_list[unsigned(can_channel_index)]->getProductCode();
 
     return 0;
 }
@@ -170,7 +169,7 @@ int getCANDeviceSerialNumber(int can_channel_index, uint64_t& serial_number)
     assert(can_channel_index >=0);
     assert(can_channel_index < int(__instance->can_channel_list.size()));
 
-    serial_number = __instance->can_channel_list[can_channel_index]->getSerialNumber();
+    serial_number = __instance->can_channel_list[unsigned(can_channel_index)]->getSerialNumber();
 
     return 0;
 }

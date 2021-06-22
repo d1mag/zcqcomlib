@@ -30,33 +30,75 @@
  *
  */
 
-#ifndef ZCQCORE_H
-#define ZCQCORE_H
+#include "zthreadlocalstring.h"
+#include "zdebug.h"
+#include <map>
 
-#include "zglobal.h"
-#include <string>
+/*** ---------------------------==*+*+*==---------------------------------- ***/
+class LocalData {
+public:
+    LocalData()
+        : str_data(new std::string())
+    {
+        /* no op */
+    }
 
-class ZCANChannel;
-void initializeZCQCommLibrary();
+    LocalData(const LocalData& local_data)
+        : str_data(new std::string(*local_data.str_data))
+    {
+        /* no op */
+    }
 
-void uninitializeZCQCommLibrary();
+    LocalData& operator=(const LocalData& local_data)
+    {
+        *str_data = *local_data.str_data;
+        return *this;
+    }
 
-ZCANChannel* getCANChannel(unsigned can_channel_index);
+    ~LocalData()
+    {
+        delete str_data;
+    }
 
-unsigned getNumberOfZCQCANChannels();
+    void set(const std::string& s)
+    {
+        *str_data = s;
+    }
 
-unsigned getNumberOfZCQLINChannels();
+    const std::string& get() const
+    {
+        return *str_data;
+    }
+private:
+    std::string* str_data;
+};
 
-int getCANDeviceLocalChannelNr(int can_channel_index);
+/*** ---------------------------==*+*+*==---------------------------------- ***/
+static thread_local std::map<ZThreadLocalString*, LocalData> __z_value_map;
 
-int getCANDeviceLocalChannelName(int can_channel_index, std::string& channel_name);
+/*** ---------------------------==*+*+*==---------------------------------- ***/
+ZThreadLocalString::ZThreadLocalString()
+{
+    __z_value_map[this] = LocalData();
+}
 
-int getCANDeviceDescription(int can_channel_index, std::string& device_description);
+ZThreadLocalString::~ZThreadLocalString()
+{
+    __z_value_map.erase(this);
+}
 
-int getCANDeviceFWVersion(int can_channel_index, uint32_t& fw_version);
+ZThreadLocalString &ZThreadLocalString::operator=(const std::string &s)
+{
+    __z_value_map[this].set(s);
+    return *this;
+}
 
-int getCANDeviceSerialNumber(int can_channel_index, uint64_t& serial_number);
+const char *ZThreadLocalString::c_str()
+{
+    return __z_value_map[this].get().c_str();
+}
 
-int getCANDeviceProductCode(int can_channel_index, uint64_t& product_code);
-
-#endif /* ZCQCORE_H */
+ZThreadLocalString::operator const std::string &()
+{
+    return __z_value_map[this].get();
+}

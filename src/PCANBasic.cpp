@@ -33,7 +33,9 @@
 #include "PCANBasic.h"
 #include "zglobal.h"
 
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
 
 DWORD CAN_Initialize(WORD channel_handle,
                      WORD baud_rate,

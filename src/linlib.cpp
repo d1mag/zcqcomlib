@@ -32,7 +32,9 @@
 
 #include "linlib.h"
 
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
 
 void linInitializeLibrary()
 {
@@ -94,7 +96,7 @@ LinStatus linBusOff(LinHandle h)
 
 unsigned long linReadTimer(LinHandle h)
 {
-    return linERR_NOT_IMPLEMENTED;
+    return static_cast<unsigned long>(linERR_NOT_IMPLEMENTED);
 }
 
 LinStatus linWriteMessage(LinHandle h,

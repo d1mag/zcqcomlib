@@ -699,7 +699,7 @@ CanHandle CANLIBAPI canOpenChannel (int channel, int flags)
 {
     std::lock_guard<std::mutex> lock(open_close_mutex);
 
-    ZRef<ZCANChannel> can_channel = getCANChannel(channel);
+    ZRef<ZCANChannel> can_channel = getCANChannel(unsigned(channel));
     if ( can_channel == nullptr ) return canERR_NOTFOUND;
 
     int handle = canINVALID_HANDLE;
@@ -742,7 +742,7 @@ CanHandle CANLIBAPI canOpenChannel (int channel, int flags)
 canStatus CANLIBAPI canGetNumberOfChannels (int *channel_count)
 {
     if ( channel_count == nullptr ) return canERR_PARAM;
-    *channel_count = getNumberOfZCQCANChannels();
+    *channel_count = int(getNumberOfZCQCANChannels());
 
     return canOK;
 }
@@ -754,7 +754,7 @@ canStatus CANLIBAPI canGetChannelData (int channel,
                                        size_t buffer_size)
 {
     if ( buffer == nullptr || buffer_size == 0 ) return canERR_PARAM;
-    if  ( channel < 0 || channel >= getNumberOfZCQCANChannels() ) return canERR_PARAM;
+    if  ( channel < 0 || channel >= int(getNumberOfZCQCANChannels()) ) return canERR_PARAM;
     switch(item) {
     case canCHANNELDATA_CHANNEL_NAME: {
         std::string channel_text;

@@ -34,6 +34,8 @@
 #define ZZENOCANCHANNEL_H_
 
 #include "zcanchannel.h"
+#include "zthreadlocalstring.h"
+#include "zzenotimersynch.h"
 #include "zenocan.h"
 #include "zring.h"
 
@@ -42,7 +44,7 @@
 #include <mutex>
 
 class ZZenoUSBDevice;
-class ZZenoCANChannel : public ZCANChannel {
+class ZZenoCANChannel : public ZCANChannel, public ZZenoTimerSynch {
 public:
     ZZenoCANChannel(int _channel_index, ZZenoUSBDevice* _usb_can_device);
     ~ZZenoCANChannel() override;
@@ -81,6 +83,8 @@ public:
     void queueMessageCANFDP3(ZenoCANFDMessageP3& message_p3);
     void txAck(ZenoTxCANRequestAck& tx_ack);
 
+    bool getDeviceTimeInUs(int64_t& timestamp_in_us) override;
+
     uint64_t getDeviceClock() override;
 
     ZCANDriver* getCANDriver() const override;
@@ -90,7 +94,7 @@ private:
     void flushTxFifo();
     bool checkOpen();
     bool waitForSpaceInTxFifo(std::unique_lock<std::mutex>& lock, int& timeout_in_ms);
-    bool getZenoDeviceTimeInUs(uint64_t& timestamp_in_us);
+    bool getZenoDeviceTimeInUs(int64_t &timestamp_in_us);
     SendResult sendFD(const uint32_t id, const uint8_t *msg,
                       const uint8_t dlc, const uint32_t flags,
                       int timeout_in_ms);
@@ -100,10 +104,9 @@ private:
     unsigned long microseconds_since_epoch;
 
     bool is_canfd_mode;
-    std::atomic<int> initial_timer_adjustment_done;
     ZZenoUSBDevice* usb_can_device;
 
-    std::string last_error_text;
+    ZThreadLocalString last_error_text;
 
     /* RX logic */
     std::mutex rx_message_fifo_mutex;
@@ -144,8 +147,8 @@ private:
     ZRing<FifoTxCANMessage> tx_message_fifo;
 
     /* Calculate bus load */
-    uint64_t bus_active_bit_count;
-    uint64_t last_measure_time_in_us;
+    int64_t bus_active_bit_count;
+    int64_t last_measure_time_in_us;
     int current_bitrate;
 
     // int tx_id;
