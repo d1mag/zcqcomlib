@@ -69,6 +69,7 @@ ZZenoUSBDevice::ZZenoUSBDevice(ZZenoCANDriver* _driver,
   fw_version(0),
   t2_clock_start_ref_in_us(0),
   t2_e_clock_start_ref_in_us(0),
+  t2_e_clock_start_diff_utc_us(0),
   init_calibrate_count(0),
   drift_time_in_us(0),
   time_drift_in_us(0),
@@ -814,6 +815,7 @@ void ZZenoUSBDevice::startClockInt()
 
     zDebug("Sending Start-Clock INT cmd");
     auto t0 = std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()).time_since_epoch();
+
     if  ( !sendAndWhaitReply(&cmd, &reply) ) {
         zCritical("(ZenoUSB): failed to start clock INT: %s", last_error_text.c_str());
         return;
@@ -826,6 +828,10 @@ void ZZenoUSBDevice::startClockInt()
     t2_clock_start_ref_in_us = t_now.count() + t_diff.count();
     t2_e_clock_start_ref_in_us = t2_clock_start_ref_in_us;
 
+    unsigned long t_now_utc = std::chrono::system_clock::now().time_since_epoch() / std::chrono::microseconds(1);
+    t2_e_clock_start_diff_utc_us = t2_e_clock_start_ref_in_us + t_now_utc - t_now.count();
+    zDebug("start_diff_utc_us = %ld\n", t2_e_clock_start_diff_utc_us);
+    
     init_calibrate_count = 5;
     drift_time_in_us = 0;
     time_drift_in_us = ZZenoTimerSynch::ZTimeVal();
@@ -854,6 +860,8 @@ void ZZenoUSBDevice::ajdustDeviceTimeDrift(ZZenoTimerSynch::ZTimeVal device_time
 
     ZZenoTimerSynch::ZTimeVal adjust = std::min(ZZenoTimerSynch::ZTimeVal(std::abs(diff.count())), max_adjust);
 
+    //zDebug("adjust time with diff=%ld adjust=%ld\n", diff.count(), adjust.count());
+    
     if ( diff.count() > 0 )
         time_drift_in_us -= adjust;
     else

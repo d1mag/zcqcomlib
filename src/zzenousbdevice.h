@@ -112,6 +112,9 @@ public:
     int64_t getT2ClockRef() const {
         return t2_e_clock_start_ref_in_us;
     }
+    int64_t getUTCClockRef() const {
+        return t2_e_clock_start_diff_utc_us;
+    }
 
 protected:
     void freeTransfers();
@@ -183,6 +186,7 @@ protected:
     /* Clock info */
     int64_t t2_clock_start_ref_in_us;
     int64_t t2_e_clock_start_ref_in_us;
+    int64_t t2_e_clock_start_diff_utc_us;
     int init_calibrate_count;
     int64_t drift_time_in_us;
 

@@ -130,11 +130,6 @@ bool ZZenoCANChannel::open(int open_flags)
 
     std::unique_lock<std::mutex> tx_lock(tx_message_fifo_mutex); // Have to lock when sending usb-commands
 
-    microseconds_since_epoch = std::chrono::system_clock::now().time_since_epoch() / std::chrono::microseconds(1);
-    if(channel_index >= 4) {
-        microseconds_since_epoch *= 70; // Not sure if this can overflow..
-    }
-    
     ZenoOpen cmd;
     ZenoOpenResponse reply;
 
@@ -776,7 +771,8 @@ ZCANFlags::ReadResult ZZenoCANChannel::readWait(uint32_t& id, uint8_t *msg,
     int64_t adjusted_timestamp_in_us = int64_t(driver_timestmap_in_us);
     adjusted_timestamp_in_us = caluclateTimeStamp(adjusted_timestamp_in_us,
                                                   usb_can_device->getDriftFactor());
-    adjusted_timestamp_in_us += usb_can_device->getT2ClockRef();
+    //adjusted_timestamp_in_us += usb_can_device->getT2ClockRef();
+    adjusted_timestamp_in_us += usb_can_device->getUTCClockRef(); // Let timestamp be relative to UTC-time instead.
     driver_timestmap_in_us = uint64_t(adjusted_timestamp_in_us);
 
     memcpy(msg, rx.data, dlc);
@@ -1041,9 +1037,6 @@ void ZZenoCANChannel::queueMessage(ZenoCAN20Message& message)
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = message.timestamp | (uint64_t(message.timestamp_msb) << 32);
-
-    rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
-
     rx_message->id        = message.id;
     rx_message->flags     = message.flags;
     rx_message->dlc       = message.dlc; // Should be 1-8
@@ -1066,10 +1059,7 @@ void ZZenoCANChannel::queueMessageCANFDP1(ZenoCANFDMessageP1 &message_p1)
         }
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
-        rx_message->timestamp = message_p1.timestamp; // This is only 32 bits
-
-        rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
-        
+        rx_message->timestamp = message_p1.timestamp; // This is only 32 bit
         rx_message->id        = message_p1.id;
         rx_message->flags     = message_p1.flags;
         rx_message->dlc       = message_p1.dlc;
@@ -1101,9 +1091,6 @@ void ZZenoCANChannel::queueMessageCANFDP2(ZenoCANFDMessageP2 &message_p2)
 
         FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
         rx_message->timestamp = canfd_msg_p1.timestamp;
-
-        rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
-
         rx_message->id        = canfd_msg_p1.id;
         rx_message->flags     = canfd_msg_p1.flags;
         rx_message->dlc       = canfd_msg_p1.dlc;
@@ -1138,9 +1125,6 @@ void ZZenoCANChannel::queueMessageCANFDP3(ZenoCANFDMessageP3 &message_p3)
 
     FifoRxCANMessage* rx_message = rx_message_fifo.writePtr();
     rx_message->timestamp = canfd_msg_p1.timestamp;
-
-    rx_message->timestamp += microseconds_since_epoch; // driver_timestmap_in_us seem to be 0 at driver startup.
-
     rx_message->id        = canfd_msg_p1.id;
     rx_message->flags     = canfd_msg_p1.flags;
     rx_message->dlc       = canfd_msg_p1.dlc;

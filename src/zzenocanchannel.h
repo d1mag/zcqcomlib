@@ -101,7 +101,6 @@ private:
 
     int channel_index;
     std::atomic<int> is_open;
-    unsigned long microseconds_since_epoch;
 
     bool is_canfd_mode;
     ZZenoUSBDevice* usb_can_device;
